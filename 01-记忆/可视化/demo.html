@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>概率海 · 演示</title>
+<style>
+  body { margin: 0; background: #0b0d12; color: #cfd6e4; font-family: system-ui, sans-serif; }
+  #legend { position: absolute; z-index: 1; top: 12px; left: 12px; font-size: 13px; line-height: 1.7;
+            background: rgba(20, 24, 33, .85); padding: 10px 14px; border-radius: 8px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+</style>
+<script src="vendor/3d-force-graph.min.js"></script>
+</head>
+<body>
+<div id="legend">
+  <b>概率海演示（假数据）</b><br>
+  <span style="color:#7a8396">文件一改动，本页自动刷新</span><br>
+  球的大小 = 强度<br>
+  <span class="dot" style="background:#f2b04a"></span>正面
+  <span class="dot" style="background:#6b8cff"></span>负面
+  <span class="dot" style="background:#8a93a6"></span>平淡<br>
+  <span class="dot" style="background:#ffffff"></span>发光 = 在浮现区<br>
+  细灰线连到深灰小球 = 已遗忘，只剩残影
+</div>
+<div id="graph"></div>
+<script>
+  // 假数据：strength 0~1，valence -1~1，surfaced 表示在浮现区
+  const nodes = [
+    { id: 'm1', label: '妈妈最近老咳嗽', strength: 0.25, valence: -0.4 },
+    { id: 'm2', label: '妈妈住院了', strength: 1.0, valence: -0.9, surfaced: true },
+    { id: 'm3', label: '对花生过敏（画像）', strength: 1.0, valence: 0, profile: true },
+    { id: 'm4', label: '考研上岸', strength: 0.85, valence: 0.95 },
+    { id: 'm5', label: '周末去爬山', strength: 0.4, valence: 0.5, surfaced: true },
+    { id: 'm6', label: '午饭吃了面', strength: 0.12, valence: 0.1 },
+    { id: 't1', label: '残影：十月初聊过一件不愉快的事', strength: 0.08, valence: -0.3, trace: true },
+  ];
+  const links = [
+    { source: 'm1', target: 'm2' },
+    { source: 'm4', target: 'm5' },
+    { source: 'm6', target: 't1', dashed: true },
+  ];
+
+  const color = n => n.trace ? '#555c6b'
+    : n.valence > 0.2 ? '#f2b04a' : n.valence < -0.2 ? '#6b8cff' : '#8a93a6';
+
+  const graph = ForceGraph3D()(document.getElementById('graph'));
+  graph
+    .backgroundColor('#0b0d12')
+    .graphData({ nodes, links })
+    .nodeLabel('label')
+    .nodeVal(n => 1 + n.strength * 20)
+    .nodeColor(n => n.surfaced ? '#ffffff' : color(n))
+    .nodeOpacity(0.9)
+    .linkColor(l => l.dashed ? '#444b58' : '#7a8396')
+    .linkWidth(l => l.dashed ? 0 : 1.2)
+    .cooldownTicks(100)
+    .onEngineStop(() => graph.zoomToFit(400, 40));  // 布局稳定后把全部节点收进画面
+</script>
+</body>
+</html>
