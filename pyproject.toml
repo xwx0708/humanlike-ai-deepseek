@@ -1,0 +1,13 @@
+[project]
+name = "humanlike-ai"
+version = "0.0.1"
+description = "类人 AI：记忆、情绪、回应、行动"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+src = ["src"]
