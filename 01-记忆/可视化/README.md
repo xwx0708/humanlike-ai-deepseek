@@ -24,6 +24,7 @@
 | 文件 | 作用 |
 |---|---|
 | `forgetting.html` | 遗忘曲线：可以拖动旋钮，看各种情绪强度下的曲线和回忆加固（默认页面） |
+| `pipeline.html` | 工作流程：每一步谁来做（DeepSeek / Qwen / Python / 情绪模块）、什么时候做、实现到哪一步 |
 | `demo.html` | 概率海 3D 演示（假数据） |
 | `serve.py` | 带自动刷新的本地服务器 |
 | `open_on_second_screen.py`、`打开副屏.bat` | 启动服务器，并在副屏打开窗口 |

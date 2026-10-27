@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工作流程</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --border: rgba(11,11,11,.10);
+    --deepseek: #2a78d6; --qwen: #eb6834; --python: #1baf7a; --emotion: #e87ba4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --border: rgba(255,255,255,.10);
+      --deepseek: #3987e5; --qwen: #d95926; --python: #199e70; --emotion: #d55181;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --border: rgba(255,255,255,.10);
+    --deepseek: #3987e5; --qwen: #d95926; --python: #199e70; --emotion: #d55181;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1400px; margin: 0 auto; padding: 12px 16px 20px; }
+  nav { display: flex; gap: 16px; font-size: 13px; margin-bottom: 4px; }
+  nav a { color: var(--ink-2); text-decoration: none; }
+  nav a[aria-current] { color: var(--ink); font-weight: 600; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 20px; margin-bottom: 10px; }
+  h1 { font-size: 18px; margin: 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--ink-2); font-size: 12px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .col h2 { font-size: 13px; margin: 0 0 6px; display: flex; justify-content: space-between; align-items: baseline; }
+  .col h2 small { color: var(--muted); font-weight: 400; }
+  .step { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+          padding: 8px 10px 8px 14px; margin-bottom: 8px; overflow: hidden; }
+  .step::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--who); }
+  .step .top { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+  .step .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .step .title { font-weight: 600; }
+  .who { margin-left: auto; font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+  .who .sw { width: 8px; height: 8px; margin-right: 4px; background: var(--who); }
+  .step ul { margin: 2px 0 0; padding-left: 16px; color: var(--ink-2); }
+  .step li { margin: 0; }
+  .io { margin-top: 3px; font-size: 12px; color: var(--ink-2); }
+  .io b { color: var(--ink); font-weight: 500; }
+  .status { display: inline-block; font-size: 11px; border: 1px solid var(--border); border-radius: 999px;
+            padding: 0 7px; color: var(--ink-2); margin-left: 4px; }
+  .status.done { color: var(--ink); border-color: var(--python); }
+  .status.done::before { content: "✓ "; color: var(--python); }
+  .status.todo::before { content: "… "; }
+  .status.open::before { content: "? "; }
+  .arrow { text-align: center; color: var(--muted); font-size: 12px; margin: -4px 0 4px; }
+  footer { color: var(--muted); font-size: 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <nav><a href="demo.html">概率海</a><a href="forgetting.html">遗忘曲线</a><a href="pipeline.html" aria-current="page">工作流程</a></nav>
+  <header>
+    <h1>记忆系统工作流程</h1>
+    <div class="legend" id="legend"></div>
+  </header>
+  <div class="cols" id="cols"></div>
+  <footer>状态：✓ 已实现　… 设计中　? 待定。数据来自本页内的 STEPS，改动设计时同步更新这里。依据：01-记忆/事件切分.md、潜意识.md、遗忘曲线.md，决策日志 D2、D6～D10。</footer>
+</main>
+
+<script>
+const WHO = {
+  deepseek: '思考模型 · DeepSeek API',
+  qwen: '潜意识模型 · 本地 Qwen',
+  python: 'Python 硬公式 / 规则',
+  emotion: '情绪模块',
+};
+const STATUS = { done: '已实现', todo: '设计中', open: '待定' };
+
+const STEPS = [
+  { col: 0, who: 'deepseek', title: '回复用户', status: 'todo',
+    items: ['读上下文（当下）', '看一眼浮现区，自己决定提不提', '需要时主动检索、请求翻档案'],
+    io: ['用户消息', '回复'] },
+  { col: 0, who: 'emotion', title: '实时粗略情绪', status: 'todo',
+    items: ['规则 + 本地小分类器，不调用思考模型'], io: ['每条消息', 'AI 心情'] },
+  { col: 0, who: 'python', title: '切段第一层：标候选边界', status: 'todo',
+    items: ['时间间隔 → 切出"一场对话"（硬边界）', '长度上限', '语言信号："对了""换个话题"'],
+    io: ['每条消息', '候选边界'] },
+
+  { col: 1, who: 'qwen', title: '切段第二层：确认片段', status: 'todo',
+    items: ['合并、拆分候选片段；判断话题跳变和漂移', '每个片段一句话标题；"接着聊到"关系', '按峰终定律打情绪分（调用情绪模块）', '顺便输出涉及的人物和别名'],
+    io: ['最近一段对话 + 候选边界', '片段、人物别名表'] },
+  { col: 1, who: 'python', title: '事件线候选筛选', status: 'todo',
+    items: ['最近活跃 ∪ 人名/称谓重合 ∪ jieba + BM25 关键词重合', '∪ 高情绪高重要性常驻 ∪ 档案人名强匹配', '总数上限 20 条（超出时的排序待定）'],
+    io: ['新片段', '≤ 20 条候选：标题、摘要、最近片段标题、人物'] },
+  { col: 1, who: 'qwen', title: '判断归属', status: 'todo',
+    items: ['输出事件线 id 列表（可多选）或"新建"', '附 0～1 把握值，低于阈值就新建'],
+    io: ['新片段 + 候选', '挂到事件线'] },
+  { col: 1, who: 'qwen', title: '修改函数参数', status: 'todo',
+    items: ['单条记忆：例如"我妈住院"拉长"我妈咳嗽"的半衰期', '类别：某类话题整体变快或变慢', '全局：五个旋钮、遗忘线'],
+    io: ['新片段 + 相关旧记忆', '结构化调整请求'] },
+  { col: 1, who: 'python', title: '参数护栏 + 日志', status: 'done',
+    items: ['单条：单次 ×3、累积 ×5 以内', '全局：单次 ±10%，默认值 1/1.5～1.5 倍，同一参数间隔 7 天', '所有请求都记日志，包括被拒绝的'],
+    io: ['调整请求', '新参数 + 日志'] },
+
+  { col: 2, who: 'python', title: '遗忘曲线', status: 'done',
+    items: ['S = 0.5^(Δt / H)', 'H = H₀ × E^a × I^i × 首尾加成 × 调整', '被真正用到时：强度回满，半衰期加长'],
+    io: ['时间、参数', '强度；低于遗忘线即遗忘'] },
+  { col: 2, who: 'qwen', title: '遗忘后整理', status: 'todo',
+    items: ['归类、删减、模糊化', '原文移入档案，概率海留残影', '"一场对话"的摘要随子片段遗忘重新概括'],
+    io: ['低于遗忘线的片段', '档案 + 残影'] },
+  { col: 2, who: 'qwen', title: '夜间检查事件线', status: 'todo',
+    items: ['检查近期新建的事件线，重复的合并'], io: ['近期新建的事件线', '合并后的事件线'] },
+  { col: 2, who: 'python', title: '扫描器：记忆自己冒头', status: 'open',
+    items: ['分区扫描、按概率浮现到浮现区（3～5 条）', '启动加成怎么算待定（不使用嵌入模型）'],
+    io: ['概率海', '浮现区 → 思考模型'] },
+];
+
+const COLS = [
+  ['实时', '每条消息'],
+  ['对话停顿时', '批量、异步'],
+  ['空闲 · 夜间', '后台维护'],
+];
+
+const text = (tag, cls, s) => { const n = document.createElement(tag); if (cls) n.className = cls; if (s != null) n.textContent = s; return n; };
+
+const legend = document.getElementById('legend');
+for (const [k, name] of Object.entries(WHO)) {
+  const s = text('span'); const sw = text('i', 'sw'); sw.style.background = `var(--${k})`;
+  s.append(sw, document.createTextNode(name)); legend.appendChild(s);
+}
+
+const cols = document.getElementById('cols');
+let n = 0;
+COLS.forEach(([name, sub], ci) => {
+  const col = text('section', 'col');
+  const h = text('h2', null, name); h.appendChild(text('small', null, sub)); col.appendChild(h);
+  STEPS.filter(s => s.col === ci).forEach((s, i, arr) => {
+    const card = text('article', 'step'); card.style.setProperty('--who', `var(--${s.who})`);
+    const top = text('div', 'top');
+    top.append(text('span', 'n', String(++n).padStart(2, '0')), text('span', 'title', s.title),
+               text('span', `status ${s.status}`, STATUS[s.status]));
+    const who = text('span', 'who'); const sw = text('i', 'sw'); who.append(sw, document.createTextNode(WHO[s.who]));
+    top.appendChild(who);
+    const ul = text('ul'); s.items.forEach(it => ul.appendChild(text('li', null, it)));
+    const io = text('div', 'io');
+    io.append(document.createTextNode('输入 '), text('b', null, s.io[0]), document.createTextNode('　→　输出 '), text('b', null, s.io[1]));
+    card.append(top, ul, io);
+    col.appendChild(card);
+    if (i < arr.length - 1) col.appendChild(text('div', 'arrow', '↓'));
+  });
+  cols.appendChild(col);
+});
+</script>
+</body>
+</html>
