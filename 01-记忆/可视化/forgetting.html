@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>遗忘曲线</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,.10);
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,.10);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1400px; margin: 0 auto; padding: 14px 16px 24px; }
+  nav { display: flex; gap: 16px; font-size: 13px; margin-bottom: 6px; }
+  nav a { color: var(--ink-2); text-decoration: none; }
+  nav a[aria-current] { color: var(--ink); font-weight: 600; }
+  h1 { font-size: 18px; margin: 0 0 2px; }
+  .formula { color: var(--ink-2); font-size: 13px; margin: 0 0 12px; }
+  .knobs { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 12px; margin-bottom: 12px;
+           background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  .knobs label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+  .knobs input[type=range] { width: 110px; }
+  .knobs output { color: var(--ink); min-width: 34px; font-variant-numeric: tabular-nums; }
+  .knobs .group { color: var(--muted); font-size: 12px; width: 100%; margin-top: 2px; }
+  .knobs .head { display: flex; justify-content: space-between; align-items: center; }
+  #reset { font: inherit; font-size: 12px; color: var(--ink); background: var(--page); cursor: pointer;
+           border: 1px solid var(--border); border-radius: 6px; padding: 2px 10px; }
+  #reset:hover { border-color: var(--muted); }
+  .knobs input[type=text] { width: 130px; font: inherit; color: var(--ink); background: var(--page);
+                            border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 12px 8px; }
+  .card h2 { font-size: 14px; margin: 0; }
+  .card .sub { color: var(--ink-2); font-size: 12px; margin: 0 0 6px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 4px; }
+  .key { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
+  .key.dashed { border-top-style: dashed; }
+  .chart { position: relative; }
+  .chart svg { display: block; width: 100%; height: 260px; overflow: visible; }
+  .tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border);
+         border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.18);
+         white-space: nowrap; display: none; z-index: 2; }
+  .tip .day { color: var(--muted); margin-bottom: 2px; }
+  .tip .row { display: flex; align-items: center; gap: 6px; }
+  .tip .row b { font-variant-numeric: tabular-nums; min-width: 34px; }
+  .tip .row span { color: var(--ink-2); }
+  .note { color: var(--ink-2); font-size: 12px; margin: 6px 0 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+  th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  td .key { margin-right: 6px; }
+  .tick { fill: var(--muted); font-size: 11px; }
+  .dlabel { fill: var(--ink-2); font-size: 11px; }
+</style>
+</head>
+<body>
+<main>
+  <nav><a href="demo.html">概率海</a><a href="forgetting.html" aria-current="page">遗忘曲线</a></nav>
+  <h1>遗忘曲线</h1>
+  <p class="formula">强度 S = 0.5<sup>Δt / H</sup>　·　半衰期 H = H₀ × E<sub>max</sub><sup>相对唤醒度</sup> × I<sub>max</sub><sup>重要性</sup> × 首尾加成　·　S 低于遗忘线即被遗忘　·　公式说明见 01-记忆/遗忘曲线.md</p>
+
+  <div class="knobs" id="knobs">
+    <div class="group head">旋钮（所有曲线共用）<button type="button" id="reset">恢复默认值</button></div>
+    <label>基础半衰期 H₀ <input type="range" id="H0" min="1" max="30" step="0.5" value="7"><output for="H0"></output>天</label>
+    <label>情绪放大 E<sub>max</sub> <input type="range" id="Emax" min="1" max="30" step="0.5" value="10"><output for="Emax"></output>倍</label>
+    <label>重要性放大 I<sub>max</sub> <input type="range" id="Imax" min="1" max="10" step="0.5" value="5"><output for="Imax"></output>倍</label>
+    <label>回忆加固 R <input type="range" id="R" min="0" max="2" step="0.05" value="1"><output for="R"></output></label>
+    <label>首尾加成 <input type="range" id="P" min="1" max="3" step="0.1" value="1.5"><output for="P"></output>倍</label>
+    <label>遗忘线 <input type="range" id="F" min="0.01" max="0.5" step="0.01" value="0.1"><output for="F"></output></label>
+    <label>横轴 <select id="range"><option value="90">90 天</option><option value="365" selected>一年</option><option value="1100">三年</option></select></label>
+    <div class="group">自定义记忆（右图和左图第 5 条曲线）</div>
+    <label>相对唤醒度 <input type="range" id="a" min="0" max="1" step="0.05" value="0.3"><output for="a"></output></label>
+    <label>重要性 <input type="range" id="imp" min="0" max="1" step="0.05" value="0"><output for="imp"></output></label>
+    <label><input type="checkbox" id="edge"> 对话首尾片段</label>
+    <label>在第几天被回忆 <input type="text" id="recalls" value="5, 15, 40, 90"></label>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>情绪越强，忘得越慢</h2>
+      <p class="sub">不同情绪强度的记忆，从记下那天起、不被回忆时的强度变化</p>
+      <div class="legend" id="legend1"></div>
+      <div class="chart" id="chart1"><svg></svg><div class="tip"></div></div>
+    </section>
+    <section class="card">
+      <h2>被回忆就加固：间隔越久，加固越多</h2>
+      <p class="sub">同一条自定义记忆，在指定日子被真正用到 vs 从不被回忆</p>
+      <div class="legend" id="legend2"></div>
+      <div class="chart" id="chart2"><svg></svg><div class="tip"></div></div>
+      <p class="note" id="recallNote"></p>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:12px">
+    <h2>数据表</h2>
+    <table id="table"></table>
+  </section>
+</main>
+
+<script>
+// 与 src/memory/forgetting.py 同一套公式；以 Python 版本为准，改公式时两边一起改。
+const $ = id => document.getElementById(id);
+const K = {};
+const readKnobs = () => {
+  for (const id of ['H0', 'Emax', 'Imax', 'R', 'P', 'F', 'a', 'imp']) K[id] = +$(id).value;
+  K.edge = $('edge').checked;
+  K.xmax = +$('range').value;
+  document.querySelectorAll('.knobs output').forEach(o => o.textContent = $(o.htmlFor).value);
+};
+const halfLife = (a, imp, edge = false) => K.H0 * K.Emax ** a * K.Imax ** imp * (edge ? K.P : 1);
+const strength = (H, dt) => 0.5 ** (Math.max(0, dt) / H);
+const forgetDays = H => H * Math.log2(1 / K.F);
+
+// 回忆时间线：每次被用到，强度回满，H ×= 1 + R × (1 − 当时强度)
+function recallTimeline(H, days) {
+  const events = [];
+  let last = 0;
+  for (const d of days) {
+    if (d <= last) continue;
+    const s = strength(H, d - last);
+    const before = H;
+    H *= 1 + K.R * (1 - s);
+    events.push({ day: d, s, before, after: H, fromArchive: s < K.F });
+    last = d;
+  }
+  const fn = t => {
+    let h = halfLife(K.a, K.imp, K.edge), from = 0;
+    for (const e of events) { if (e.day <= t) { h = e.after; from = e.day; } }
+    return strength(h, t - from);
+  };
+  return { events, fn, forgetDay: last + forgetDays(H), finalH: H };
+}
+
+const presets = () => [
+  { name: '平淡', a: 0, imp: 0, color: 'var(--s1)' },
+  { name: '有点情绪', a: 0.5, imp: 0, color: 'var(--s2)' },
+  { name: '很强烈', a: 0.9, imp: 0, color: 'var(--s3)' },
+  { name: '极强烈', a: 1, imp: 0, color: 'var(--s4)' },
+  { name: '自定义', a: K.a, imp: K.imp, edge: K.edge, color: 'var(--s5)' },
+].map(p => ({ ...p, H: halfLife(p.a, p.imp, p.edge) }));
+
+const fmtDays = d => d >= 365 ? `${(d / 365).toFixed(1)} 年` : d >= 60 ? `${(d / 30.4).toFixed(1)} 个月` : `${Math.round(d)} 天`;
+
+// ---------- 通用折线图 ----------
+const NS = 'http://www.w3.org/2000/svg';
+const el = (tag, attrs, parent) => {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  parent && parent.appendChild(n);
+  return n;
+};
+
+function niceStep(max) {
+  for (const s of [7, 14, 30, 60, 90, 180, 365]) if (max / s <= 7) return s;
+  return 365;
+}
+
+function drawChart(box, { series, markers = [], labels = [] }) {
+  const svg = box.querySelector('svg'), tip = box.querySelector('.tip');
+  svg.replaceChildren();
+  const W = svg.clientWidth, H = svg.clientHeight, m = { l: 36, r: 12, t: 10, b: 24 };
+  const X = d => m.l + d / K.xmax * (W - m.l - m.r);
+  const Y = s => m.t + (1 - s) * (H - m.t - m.b);
+
+  for (const s of [0, 0.25, 0.5, 0.75, 1]) {
+    el('line', { x1: m.l, x2: W - m.r, y1: Y(s), y2: Y(s), stroke: s === 0 ? 'var(--axis)' : 'var(--grid)', 'stroke-width': 1 }, svg);
+    el('text', { x: m.l - 6, y: Y(s) + 4, 'text-anchor': 'end', class: 'tick' }, svg).textContent = s.toFixed(2).replace(/0$/, '');
+  }
+  const step = niceStep(K.xmax);
+  for (let d = 0; d <= K.xmax; d += step)
+    el('text', { x: X(d), y: H - 6, 'text-anchor': 'middle', class: 'tick' }, svg).textContent = d === 0 ? '0' : `${d}天`;
+
+  // 遗忘线
+  el('line', { x1: m.l, x2: W - m.r, y1: Y(K.F), y2: Y(K.F), stroke: 'var(--muted)', 'stroke-dasharray': '4 4', 'stroke-width': 1 }, svg);
+  el('text', { x: W - m.r, y: Y(K.F) - 5, 'text-anchor': 'end', class: 'tick' }, svg).textContent = '遗忘线';
+
+  for (const s of series) {
+    const pts = [], N = 500;
+    const ts = Array.from({ length: N + 1 }, (_, i) => i / N * K.xmax);
+    for (const b of s.breaks || []) if (b < K.xmax) ts.push(b - 1e-6, b);
+    ts.sort((p, q) => p - q);
+    for (const t of ts) pts.push(`${X(t).toFixed(1)},${Y(s.fn(t)).toFixed(1)}`);
+    el('polyline', { points: pts.join(' '), fill: 'none', stroke: s.color, 'stroke-width': 2,
+                     'stroke-dasharray': s.dashed ? '5 4' : 'none', 'stroke-linejoin': 'round' }, svg);
+  }
+  for (const mk of markers) if (mk.day <= K.xmax)
+    el('circle', { cx: X(mk.day), cy: Y(mk.s), r: 4.5, fill: mk.color, stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
+  labels.filter(l => l.day <= K.xmax).forEach((l, i) => {
+    el('circle', { cx: X(l.day), cy: Y(K.F), r: 4, fill: l.color, stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
+    el('text', { x: X(l.day) + 6, y: Y(K.F) - 8 - (i % 2) * 14, class: 'dlabel' }, svg).textContent = l.text;
+  });
+
+  // 十字线 + 提示框：显示该天所有曲线的强度
+  const cross = el('line', { y1: m.t, y2: H - m.b, stroke: 'var(--muted)', 'stroke-width': 1, visibility: 'hidden' }, svg);
+  svg.onpointermove = e => {
+    const r = svg.getBoundingClientRect();
+    const day = Math.round(Math.min(K.xmax, Math.max(0, (e.clientX - r.left - m.l) / (W - m.l - m.r) * K.xmax)));
+    cross.setAttribute('x1', X(day)); cross.setAttribute('x2', X(day)); cross.setAttribute('visibility', 'visible');
+    tip.replaceChildren();
+    const head = document.createElement('div'); head.className = 'day'; head.textContent = `第 ${day} 天`; tip.appendChild(head);
+    for (const s of series) {
+      const row = document.createElement('div'); row.className = 'row';
+      const key = document.createElement('i'); key.className = 'key' + (s.dashed ? ' dashed' : ''); key.style.borderColor = s.color;
+      const v = document.createElement('b'); const val = s.fn(day); v.textContent = val.toFixed(2);
+      const n = document.createElement('span'); n.textContent = s.name + (val < K.F ? '（已遗忘）' : '');
+      row.append(key, v, n); tip.appendChild(row);
+    }
+    tip.style.display = 'block';
+    const x = X(day) + 12, flip = x + tip.offsetWidth > W;
+    tip.style.left = (flip ? X(day) - 12 - tip.offsetWidth : x) + 'px';
+    tip.style.top = '8px';
+  };
+  svg.onpointerleave = () => { cross.setAttribute('visibility', 'hidden'); tip.style.display = 'none'; };
+}
+
+function legend(id, items) {
+  const box = $(id); box.replaceChildren();
+  for (const it of items) {
+    const s = document.createElement('span');
+    const k = document.createElement('i'); k.className = 'key' + (it.dashed ? ' dashed' : ''); k.style.borderColor = it.color;
+    s.append(k, document.createTextNode(it.name)); box.appendChild(s);
+  }
+}
+
+function render() {
+  readKnobs();
+  const ps = presets();
+
+  // 左图
+  const s1 = ps.map(p => ({ name: p.name, color: p.color, fn: t => strength(p.H, t) }));
+  legend('legend1', s1);
+  drawChart($('chart1'), {
+    series: s1,
+    labels: ps.slice(0, 4).map(p => ({ day: forgetDays(p.H), color: p.color, text: `${p.name} ${fmtDays(forgetDays(p.H))}` })),
+  });
+
+  // 右图
+  const days = $('recalls').value.split(/[,，\s]+/).map(Number).filter(d => d > 0).sort((p, q) => p - q);
+  const H = halfLife(K.a, K.imp, K.edge), tl = recallTimeline(H, days);
+  const s2 = [
+    { name: '被回忆', color: 'var(--s5)', fn: tl.fn, breaks: tl.events.map(e => e.day) },
+    { name: '从不回忆', color: 'var(--muted)', dashed: true, fn: t => strength(H, t) },
+  ];
+  legend('legend2', s2);
+  drawChart($('chart2'), { series: s2, markers: tl.events.map(e => ({ day: e.day, s: 1, color: 'var(--s5)' })) });
+  const chain = [H, ...tl.events.map(e => e.after)].map(h => h.toFixed(1)).join(' → ');
+  const archived = tl.events.filter(e => e.fromArchive).map(e => e.day);
+  $('recallNote').textContent =
+    `半衰期 ${chain} 天。从不回忆：第 ${Math.round(forgetDays(H))} 天被遗忘；按上面的日子回忆：第 ${Math.round(tl.forgetDay)} 天被遗忘。` +
+    (archived.length ? `第 ${archived.join('、')} 天那次回忆时已低于遗忘线，相当于从档案里找回。` : '');
+
+  // 数据表
+  const t = $('table'); t.replaceChildren();
+  const head = t.insertRow();
+  for (const h of ['记忆', '相对唤醒度', '重要性', '半衰期', '被遗忘于']) {
+    const th = document.createElement('th'); th.textContent = h; head.appendChild(th);
+  }
+  for (const p of ps) {
+    const r = t.insertRow();
+    const c0 = r.insertCell(); const k = document.createElement('i'); k.className = 'key'; k.style.borderColor = p.color;
+    c0.append(k, document.createTextNode(p.name + (p.edge ? '（首尾片段）' : '')));
+    r.insertCell().textContent = p.a.toFixed(2);
+    r.insertCell().textContent = p.imp.toFixed(2);
+    r.insertCell().textContent = `${p.H.toFixed(1)} 天`;
+    r.insertCell().textContent = `第 ${Math.round(forgetDays(p.H))} 天（${fmtDays(forgetDays(p.H))}）`;
+  }
+}
+
+$('knobs').addEventListener('input', render);
+// 恢复默认值：回到 html 里写的初始值，也就是 forgetting.py 中 ForgettingKnobs 的默认值
+$('reset').addEventListener('click', () => {
+  $('knobs').querySelectorAll('input, select').forEach(c => {
+    if (c.type === 'checkbox') c.checked = c.defaultChecked;
+    else if (c.tagName === 'SELECT') [...c.options].forEach(o => o.selected = o.defaultSelected);
+    else c.value = c.defaultValue;
+  });
+  render();
+});
+addEventListener('resize', render);
+render();
+</script>
+</body>
+</html>

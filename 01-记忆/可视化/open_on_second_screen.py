@@ -1,6 +1,8 @@
 """启动自动刷新服务器（如果没在运行），并把可视化页面用独立窗口最大化显示在副屏上。
 
-用法：python open_on_second_screen.py [页面]，默认 demo.html。也可以直接双击「打开副屏.bat」。
+用法：python open_on_second_screen.py [页面]，也可以直接双击「打开副屏.bat」。
+不指定页面时：窗口已开着就只移回副屏，没开就打开 forgetting.html。
+指定页面时：窗口已开着就关掉，在指定页面重新打开。
 窗口用单独的 Edge 配置（%LOCALAPPDATA%\\memory-viz-edge），不影响日常使用的 Edge。
 """
 
@@ -18,16 +20,26 @@ for stream in (sys.stdout, sys.stderr):  # 有的控制台编码打不出中文�
 
 HERE = Path(__file__).resolve().parent
 PORT = 8790
-PAGE = sys.argv[1] if len(sys.argv) > 1 else "demo.html"
+PAGE_GIVEN = len(sys.argv) > 1
+PAGE = sys.argv[1] if PAGE_GIVEN else "forgetting.html"
 URL = f"http://127.0.0.1:{PORT}/{PAGE}"
 PROFILE = Path(os.environ["LOCALAPPDATA"]) / "memory-viz-edge"
 EDGE = Path(os.environ["ProgramFiles(x86)"]) / "Microsoft/Edge/Application/msedge.exe"
 
 user32 = ctypes.windll.user32
 user32.ShowWindow.argtypes = [wt.HWND, ctypes.c_int]
-user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.UINT]
+user32.SetWindowPos.argtypes = [
+    wt.HWND,
+    wt.HWND,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wt.UINT,
+]
 user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
 user32.IsWindowVisible.argtypes = [wt.HWND]
+user32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
 user32.GetWindowTextLengthW.argtypes = [wt.HWND]
 
 
@@ -61,7 +73,8 @@ def viz_pids() -> set[int]:
         "Where-Object { $_.CommandLine -like '*memory-viz-edge*' -and $_.CommandLine -notlike '*--type=*' } | "
         "ForEach-Object { $_.ProcessId }"
     )
-    out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True).stdout
+    cmd = ["powershell", "-NoProfile", "-Command", ps]
+    out = subprocess.run(cmd, check=False, capture_output=True, text=True).stdout
     return {int(x) for x in out.split()}
 
 
@@ -105,9 +118,23 @@ def main() -> None:
     ensure_server()
 
     wins = windows_of(viz_pids())
+    if wins and PAGE_GIVEN:  # 换页面：关掉旧窗口再开
+        for hwnd in wins:
+            user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+        deadline = time.time() + 10
+        while wins and time.time() < deadline:
+            time.sleep(0.5)
+            wins = windows_of(viz_pids())
     if not wins:
-        subprocess.Popen([str(EDGE), f"--user-data-dir={PROFILE}", "--no-first-run",
-                          "--no-default-browser-check", f"--app={URL}"])
+        subprocess.Popen(
+            [
+                str(EDGE),
+                f"--user-data-dir={PROFILE}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                f"--app={URL}",
+            ]
+        )
         deadline = time.time() + 15
         while not wins and time.time() < deadline:
             time.sleep(0.5)
