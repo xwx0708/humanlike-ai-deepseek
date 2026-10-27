@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "记忆可视化",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["01-记忆/可视化/serve.py", "8790"],
+      "port": 8790,
+      "autoPort": false
+    }
+  ]
+}
