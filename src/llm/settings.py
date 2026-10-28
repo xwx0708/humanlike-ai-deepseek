@@ -18,6 +18,9 @@ class Settings:
     # 两个角色各自用哪家、哪个模型，可以随意搭配（决策 D13）
     thinking_provider: str = "deepseek"
     thinking_model: str = "deepseek-flash"
+    thinking_context_limit: int = (
+        128000  # 思考模型的上下文上限（token）。熟悉期用到七成就启动记忆系统（D24）；换模型时要改
+    )
     subconscious_provider: str = "ollama"
     subconscious_model: str = "qwen3.8:27b-q4_K_M"
     # 各家的连接设置，两个角色共用
