@@ -1,4 +1,4 @@
-"""思考模型：DeepSeek API（OpenAI 兼容格式）。"""
+"""DeepSeek API（OpenAI 兼容格式）。默认给思考模型用，也可以给潜意识用。"""
 
 import json
 import time

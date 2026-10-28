@@ -10,13 +10,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+PROVIDERS = ("deepseek", "ollama")
+
+
 @dataclass(frozen=True)
 class Settings:
+    # 两个角色各自用哪家、哪个模型，可以随意搭配（决策 D13）
+    thinking_provider: str = "deepseek"
+    thinking_model: str = "deepseek-flash"
+    subconscious_provider: str = "ollama"
+    subconscious_model: str = "qwen3.8:27b-q4_K_M"
+    # 各家的连接设置，两个角色共用
     deepseek_api_key: str = ""
-    deepseek_model: str = "deepseek-flash"
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_thinking: bool = False  # 开启后先思考再回答，更慢、更费 token
-    ollama_model: str = "qwen3.8:27b-q4_K_M"
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_keep_alive: str = "30m"  # 空闲多久后卸载模型；首次加载约 1.5 分钟，所以留久一点
     ollama_num_ctx: int = 16384  # 上下文长度；3090 加载模型后约剩 7GB，太大会爆显存

@@ -1,6 +1,6 @@
 """模型调用的统一接口。
 
-思考模型（DeepSeek API）和潜意识模型（本地 Ollama 上的 Qwen）都实现 ChatModel，
+思考模型和潜意识模型都只依赖 ChatModel，各自用哪家、哪个模型由配置决定（决策 D13），
 测试时用 llm.fake.FakeModel 代替。各模块只依赖这里的定义，不直接依赖某家的 API。
 """
 

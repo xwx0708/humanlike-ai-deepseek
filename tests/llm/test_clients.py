@@ -130,28 +130,57 @@ def test_fake_model_records_calls_and_checks_schema():
         fake.chat([user("c")])
 
 
+ROLE_VARS = ("THINKING_PROVIDER", "THINKING_MODEL", "SUBCONSCIOUS_PROVIDER", "SUBCONSCIOUS_MODEL")
+
+
 def test_settings_env_beats_dotenv(tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text(
-        "OLLAMA_MODEL=from-file\nOLLAMA_NUM_CTX=4096\n# 注释\nDEEPSEEK_MODEL='deepseek-v4-pro'\n", "utf-8"
+        "SUBCONSCIOUS_MODEL=from-file\nOLLAMA_NUM_CTX=4096\n# 注释\nTHINKING_MODEL='deepseek-v4-pro'\n",
+        "utf-8",
     )
-    monkeypatch.setenv("OLLAMA_MODEL", "from-env")
-    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+    monkeypatch.setenv("SUBCONSCIOUS_MODEL", "from-env")
+    monkeypatch.delenv("THINKING_MODEL", raising=False)
     s = load_settings(env)
-    assert s.ollama_model == "from-env"
+    assert s.subconscious_model == "from-env"
     assert s.ollama_num_ctx == 4096
-    assert s.deepseek_model == "deepseek-v4-pro"
+    assert s.thinking_model == "deepseek-v4-pro"
 
 
 def test_env_example_parses_cleanly(monkeypatch):
     """项目根目录的 .env.example 原样复制成 .env 也能用：行尾注释不会混进值里。"""
     from llm.settings import ROOT
 
-    for k in ("DEEPSEEK_MODEL", "DEEPSEEK_THINKING", "OLLAMA_NUM_CTX", "OLLAMA_KEEP_ALIVE"):
+    for k in (*ROLE_VARS, "DEEPSEEK_THINKING", "OLLAMA_NUM_CTX", "OLLAMA_KEEP_ALIVE"):
         monkeypatch.delenv(k, raising=False)
     s = load_settings(ROOT / ".env.example")
-    assert (s.deepseek_model, s.deepseek_thinking) == ("deepseek-flash", False)
-    assert (s.ollama_num_ctx, s.ollama_keep_alive) == (16384, "30m")
+    assert (s.thinking_provider, s.thinking_model) == ("deepseek", "deepseek-flash")
+    assert (s.subconscious_provider, s.subconscious_model) == ("ollama", "qwen3.8:27b-q4_K_M")
+    assert (s.deepseek_thinking, s.ollama_num_ctx, s.ollama_keep_alive) == (False, 16384, "30m")
+
+
+def test_roles_can_use_any_provider(tmp_path, monkeypatch):
+    """思考模型和潜意识模型用哪家都可以，包括对调。"""
+    from llm import make_model, subconscious_model, thinking_model
+
+    monkeypatch.setenv("THINKING_PROVIDER", "ollama")
+    monkeypatch.setenv("THINKING_MODEL", "qwen-big")
+    monkeypatch.setenv("SUBCONSCIOUS_PROVIDER", "deepseek")
+    monkeypatch.setenv("SUBCONSCIOUS_MODEL", "deepseek-v4-pro")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    t, sub = thinking_model(), subconscious_model()
+    assert isinstance(t, OllamaModel) and t.name == "qwen-big"
+    assert isinstance(sub, DeepSeekModel) and sub.name == "deepseek-v4-pro"
+    with pytest.raises(ValueError, match="不认识"):
+        make_model("openai", "x")
+
+
+def test_deepseek_without_key_is_clear(monkeypatch, tmp_path):
+    from llm import make_model
+    from llm.settings import Settings
+
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        make_model("deepseek", "deepseek-flash", Settings(deepseek_api_key=""))
 
 
 def test_dotenv_quoted_value_keeps_hash(tmp_path, monkeypatch):

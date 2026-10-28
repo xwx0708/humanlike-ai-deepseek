@@ -1,4 +1,4 @@
-"""潜意识模型：本地 Ollama 上的 Qwen。"""
+"""Ollama 上的模型（默认给潜意识用的本地 Qwen，也可以给思考模型用）。"""
 
 import re
 import time
