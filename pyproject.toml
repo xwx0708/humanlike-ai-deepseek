@@ -3,6 +3,9 @@ name = "humanlike-ai"
 version = "0.0.1"
 description = "类人 AI：记忆、情绪、回应、行动"
 requires-python = ">=3.12"
+dependencies = [
+    "jieba>=0.42",  # 事件线候选的关键词检索（用户方案：jieba 分词 + BM25）
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

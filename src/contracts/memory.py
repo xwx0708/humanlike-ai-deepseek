@@ -80,6 +80,32 @@ class Thread:
     merged_into: int | None = None  # 夜间合并后指向保留的那条
 
 
+PROFILE_CATEGORIES = (
+    "过敏与禁忌",
+    "长期健康",
+    "家人与关系",
+    "生日与纪念日",
+    "职业与学业",
+    "居住地",
+    "长期偏好",
+    "其他",
+)
+
+
+@dataclass
+class ProfileFact:
+    """用户画像中的一条稳定事实。只能合并、不能改写，也不参与遗忘（设想文档"遗忘之后"一节）。"""
+
+    id: int | None
+    person_id: int | None  # 说的是谁；None 表示用户本人
+    category: str  # PROFILE_CATEGORIES 之一
+    fact: str  # 原样保存，之后不再改写
+    first_ts: float
+    last_ts: float  # 最近一次被提到
+    mentions: int = 1
+    segment_ids: list[int] = field(default_factory=list)  # 出处
+
+
 @dataclass
 class Person:
     """人物别名表中的一个人：妈妈 / 我妈 / 老妈 / 母亲 → 同一个 id。"""
