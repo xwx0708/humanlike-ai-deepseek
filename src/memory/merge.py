@@ -263,12 +263,13 @@ def _choose_keep(store: MemoryStore, a: int, b: int) -> tuple[int, int]:
 
 
 def _merged_exempt(keep: str | None, drop: str | None) -> str | None:
-    """合并后保留线的免竞争标记（D18）。
-    暂定：用户解除过（空字符串）的优先，因为 D18 说免竞争只在用户要求时解除，而两条线是同一件事；
-    其次保留已有的原因；都没有时为 None（之后 refresh_residents 会按条件重新判断）。"""
+    """合并后保留线的免竞争标记（D18）。用户定（D26）：名次保持优先——两条里只要有一条免竞争，合并后仍免竞争；
+    都没有原因时，用户解除过（空字符串）的保持解除；都没有时为 None（之后 refresh_residents 按条件重新判断）。"""
+    if keep or drop:
+        return keep or drop
     if keep == "" or drop == "":
         return ""
-    return keep or drop or None
+    return None
 
 
 def merge_pair(store: MemoryStore, model: ChatModel | None, keep: int, drop: int, now_ts: float) -> None:

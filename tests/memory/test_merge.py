@@ -169,3 +169,13 @@ def test_merge_with_real_qwen():
     )  # 无关线确实被问过
     for t in (mom, dad, hike):
         assert store.get_thread(t).merged_into is None
+
+
+def test_merged_exempt_keeps_higher_priority():
+    """D26：名次保持优先——只要有一条免竞争，合并后仍免竞争。"""
+    from memory.merge import _merged_exempt
+
+    assert _merged_exempt("用户要求记住", "") == "用户要求记住"
+    assert _merged_exempt("", "涉及用户真实信息") == "涉及用户真实信息"
+    assert _merged_exempt("", None) == ""
+    assert _merged_exempt(None, None) is None

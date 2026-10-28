@@ -5,7 +5,7 @@ import random
 import pytest
 
 from contracts.memory import EmotionScore, Segment
-from memory.scanner import Scanner, ScannerKnobs, search_memory, use_memory
+from memory.scanner import Scanner, ScannerKnobs, focus_of, search_memory, use_memory
 from memory.store import MemoryStore
 
 DAY = 86400.0
@@ -59,7 +59,9 @@ def test_negative_memories_surface_less_unless_related(store):
 
 def test_surfacing_is_per_minute_not_per_scan(store):
     seg = add(store, "妈妈最近老咳嗽", 0)
-    sc = Scanner(store, ScannerKnobs(rate=1.0, threshold=0.0, temperature=0.01))  # 每分钟强度约 1
+    sc = Scanner(
+        store, ScannerKnobs(rate=1.0, threshold=0.0, temp_focus=0.01, temp_diffuse=0.01)
+    )  # 每分钟强度约 1
     # 两次扫描隔 1 秒，命中概率约 1.6%；隔 10 分钟，几乎必中。与扫描多快无关，只与经过多久有关
     hits_fast = sum(bool(Scanner(store, sc.k, random.Random(i)).tick(1)) for i in range(200))
     sc2 = Scanner(store, sc.k, random.Random(0))
@@ -71,7 +73,9 @@ def test_buffer_keeps_only_a_few(store):
     for i in range(10):
         add(store, f"小事 {i}", 0)
     sc = Scanner(
-        store, ScannerKnobs(rate=100.0, threshold=0.0, temperature=0.01, buffer_size=4), random.Random(1)
+        store,
+        ScannerKnobs(rate=100.0, threshold=0.0, temp_focus=0.01, temp_diffuse=0.01, buffer_size=4),
+        random.Random(1),
     )
     sc.tick(5 * MIN)
     assert len(sc.buffer) == 4  # 旧的被挤掉
@@ -85,3 +89,25 @@ def test_search_memory_and_use_receipt(store):
     use_memory(store, seg.id, 10)
     after = store.get_segment(seg.id)
     assert after.recall_count == 1 and after.last_recall_ts == 10 and after.half_life >= seg.half_life
+
+
+def test_temperature_follows_topic_focus(store):
+    """D26：正专注于一个话题就是专注（低温），在闲聊（话题跳来跳去）就是发散（高温）。"""
+    c = store.new_conversation(0)
+    for i in range(6):
+        store.add_turn(c.id, "user", f"考研数学第 {i} 题", i * 60)
+    assert focus_of(store, c.id) == 1.0
+    sc = Scanner(store)
+    sc.set_focus(focus_of(store, c.id))
+    assert sc.temperature == pytest.approx(0.1)
+    t = store.add_turn(c.id, "user", "对了，晚饭吃啥", 400)
+    store.add_boundary(t.id, "语言信号")
+    assert focus_of(store, c.id) == pytest.approx(1 / 6)  # 刚换话题：发散
+    sc.set_focus(focus_of(store, c.id))
+    assert sc.temperature > 0.25
+    strong = add(store, "考研", 0)
+    hot, cold = Scanner(store), Scanner(store)
+    hot.set_focus(0.0)
+    cold.set_focus(1.0)
+    weak = 0.3  # 弱记忆：放空时更容易冒头
+    assert hot.probability(strong, weak) > cold.probability(strong, weak)

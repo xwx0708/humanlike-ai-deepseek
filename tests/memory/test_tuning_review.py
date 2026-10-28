@@ -78,14 +78,14 @@ def test_rollback_superseded_memory_undoes_factor(store):
     assert "已被第 2 条后续调整覆盖" in r.change.note
 
 
-def test_rollback_memory_respects_d19_floor(store):
+def test_manual_rollback_ignores_d19_floor(store):
+    """D26：人工回滚不受护栏限制，D19 也不管。"""
     seg = _segment(store, finished=False)  # 事件进行中
     apply_adjustments(store, [Adjustment("memory", str(seg.id), 2, "a")], 20 * DAY)  # 1 → 2
     apply_adjustments(store, [Adjustment("memory", str(seg.id), 0.5, "b")], 21 * DAY)  # 2 → 1
-    r = rollback(store, 1, 22 * DAY)  # 撤销 ×2 会得到 0.5，但事件未完结
-    assert store.get_segment(seg.id).adjustment == 1.0
-    assert not r.change.applied and "事件未完结" in r.change.note
-    assert list_tuning(store)[-1].reason == "回滚第 1 条"  # 没生效也记日志
+    r = rollback(store, 1, 22 * DAY)  # 撤销 ×2：得到 0.5
+    assert store.get_segment(seg.id).adjustment == pytest.approx(0.5) and r.change.applied
+    assert list_tuning(store)[-1].reason == "回滚第 1 条"
 
 
 def test_rollback_global_ignores_cooldown(store):
@@ -96,15 +96,18 @@ def test_rollback_global_ignores_cooldown(store):
     assert list_tuning(store, scope="global")[-1].reason == "回滚第 1 条"
 
 
-def test_rollback_global_superseded_is_clamped_to_range(store):
+def test_rollback_global_superseded_ignores_range_and_cooldown(store):
     # 先手动把参数放到上界附近，模拟多次调整后的状态
     k = store.load_global_knobs()
     store.save_global_knobs(replace(k, forget_line=0.06875))  # 默认 0.1 的 1/1.5 ≈ 0.0667 以上
     apply_adjustments(store, [Adjustment("global", "forget_line", 1.1, "抬高")], 0)  # 0.06875 → 0.075625
     apply_adjustments(store, [Adjustment("global", "forget_line", 0.95, "降低")], 8 * DAY)  # → 0.07184
-    r = rollback(store, 1, 9 * DAY)  # 撤销 ×1.1 → 0.0653，低于下界 0.0667
-    assert store.load_global_knobs().forget_line == pytest.approx(0.1 / 1.5)
-    assert "已到允许范围的边界" in r.change.note and "后续调整覆盖" in r.change.note
+    r = rollback(store, 1, 9 * DAY)  # 撤销 ×1.1 → 0.0653，低于下界 0.0667 也照样（D26：人工回滚不受护栏）
+    assert store.load_global_knobs().forget_line == pytest.approx(0.071843750 / 1.1)
+    assert "后续调整覆盖" in r.change.note
+    # 回滚（第 9 天）不计入潜意识的冷却：第 16 天距上次潜意识修改（第 8 天）已过 7 天，可以再改
+    out = apply_adjustments(store, [Adjustment("global", "forget_line", 1.05, "c")], 16 * DAY)
+    assert out[0][2].applied
 
 
 def test_rollback_rejects_unapplied_and_missing(store):

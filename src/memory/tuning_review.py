@@ -22,7 +22,6 @@ from typing import Any
 
 from contracts.memory import SECONDS_PER_DAY, days
 from memory.store import DEFAULT_PATH, MemoryStore
-from memory.subconscious import is_finished
 from memory.tuning import DEFAULT_KNOBS, DEFAULT_LIMITS, TUNABLE, GlobalChange, GlobalLimits
 
 KNOB_LABELS = {
@@ -229,16 +228,7 @@ def rollback(
         knobs = store.load_global_knobs()
         current = seg.adjustment
         target_value = current * undo if entry.superseded_by else entry.old
-        # 暂定：回滚后的系数仍要落在单条记忆累积调整的范围内（1/adjust_total_max～adjust_total_max）。
-        lo, hi = 1.0 / knobs.adjust_total_max, knobs.adjust_total_max
-        new = min(hi, max(lo, target_value))
-        if abs(new - target_value) > 1e-12:
-            notes.append("已到单条记忆调整范围的边界")
-        # 暂定：回滚同样遵守 D19——事件未完结时系数不能调到 1 以下（原本已低于 1 的不再往下调）。
-        floor = min(1.0, current)
-        if new < floor and not is_finished(store, seg.id):
-            new = floor
-            notes.append("事件未完结，不允许系数小于 1")
+        new = target_value  # 人工回滚不受护栏限制（用户定，D26）
         applied = abs(new - current) > 1e-12
         if applied:
             seg.half_life *= new / current
@@ -263,11 +253,7 @@ def rollback(
         knobs = store.load_global_knobs()
         current = getattr(knobs, entry.knob)
         target_value = current * undo if entry.superseded_by else entry.old
-        default = getattr(defaults, entry.knob)
-        # 不受冷却限制，但范围限制照旧
-        new = min(default * limits.range_max, max(default / limits.range_max, target_value))
-        if abs(new - target_value) > 1e-12:
-            notes.append("已到允许范围的边界")
+        new = target_value  # 人工回滚不受护栏限制：不看冷却、不看范围（用户定，D26）
         applied = abs(new - current) > 1e-12
         if applied:
             store.save_global_knobs(replace(knobs, **{entry.knob: new}))

@@ -5,7 +5,7 @@
 - 后台循环像时钟指针一样轮流扫描分区，对每条记忆：衰减强度、加上当下话题的"启动"加成、按概率掷骰子，
   命中就放进浮现区；p = sigmoid((强度 + 启动加成 - 阈值) / 温度)。
 - 浮现区容量很小（3～5 条），旧的会被挤掉；思考模型每轮看一眼，自己决定要不要提起。
-- 温度：低温专注，高温放空。保留兜底：思考模型仍可主动检索（search_memory）。
+- 温度：低温专注，高温放空；由话题而定：正专注于一个话题就是专注，在闲聊就是发散（用户定，D26）。保留兜底：思考模型仍可主动检索（search_memory）。
 - 检索要留下痕迹：被真正用到一次就回报一次（use_memory），用于加固（D20）。
 
 暂定（待用户确认，见 00-总纲/待你确认.md）：
@@ -35,7 +35,10 @@ IN_MEMORY = ("active", "abstract")
 class ScannerKnobs:
     buffer_size: int = 4  # 浮现区容量（设想文档 3～5，取中间，暂定）
     threshold: float = 0.6  # sigmoid 的阈值（暂定）
-    temperature: float = 0.15  # 低温专注、高温放空（暂定默认值；由谁、按什么调，待定）
+    # 温度由话题而定（用户定，D26）：正专注于一个话题就是专注（低温），在闲聊就是发散（高温）
+    temp_focus: float = 0.1  # 专注时的温度（暂定）
+    temp_diffuse: float = 0.3  # 闲聊时的温度（暂定）
+    focus_turns: int = 6  # 同一个话题连续聊到几条用户消息，算完全专注（暂定）
     rate: float = 0.02  # 每分钟的浮现强度上限：最强、最相关的记忆约每 50 分钟冒头一次（暂定）
     priming_max: float = 0.5  # 启动加成的上限（暂定）
     person_bonus: float = 0.3  # 人物重合给的启动加成（暂定）
@@ -63,6 +66,14 @@ class Scanner:
     priming: dict[int, float] = field(default_factory=dict)  # 片段 → 启动加成；话题变化时算一次
     _cursor: int = 0
     _last_scan: dict[int, float] = field(default_factory=dict)
+    focus: float = 0.5  # 0 = 闲聊发散，1 = 专注于一个话题；由 set_focus / focus_of 给出
+
+    @property
+    def temperature(self) -> float:
+        return self.k.temp_diffuse + (self.k.temp_focus - self.k.temp_diffuse) * self.focus
+
+    def set_focus(self, focus: float) -> None:
+        self.focus = min(1.0, max(0.0, focus))
 
     def set_topic(self, text: str, person_ids: list[int] = ()) -> None:
         """当下话题变化时调用一次：给相关记忆"充电"。"""
@@ -91,7 +102,7 @@ class Scanner:
     def probability(self, seg: Segment, strength: float) -> float:
         """每分钟的浮现强度（0～rate）。"""
         prim = self.priming.get(seg.id, 0.0)
-        x = (strength + prim - self.k.threshold) / self.k.temperature
+        x = (strength + prim - self.k.threshold) / self.temperature
         p = 1 / (1 + math.exp(-max(-50.0, min(50.0, x))))
         valence = seg.emotion.valence if seg.emotion else 0.0
         if valence < 0:  # 负面记忆：话题不相关时少冒头，相关时照常
@@ -154,3 +165,16 @@ def use_memory(store: MemoryStore, segment_id: int, ts: float) -> None:
     after = recall(Trace(seg.half_life, 0.0, seg.recall_count), elapsed, store.load_global_knobs())
     seg.half_life, seg.recall_count, seg.last_recall_ts = after.half_life, after.recall_count, ts
     store.save_segment_state(seg)
+
+
+def focus_of(store: MemoryStore, conversation_id: int, k: ScannerKnobs = DEFAULT_KNOBS) -> float:
+    """这场对话现在有多专注：从最近一个候选边界（换话题的信号）起，用户连续聊了几条，满 focus_turns 条算 1。
+    暂定：用切段第一层的候选边界判断"还在不在同一个话题"，不调用模型；话题频繁跳来跳去就是闲聊、发散。"""
+    turns = [t for t in store.turns(conversation_id) if t.role == "user"]
+    marks = store.boundaries(conversation_id)
+    n = 0
+    for t in reversed(turns):
+        n += 1
+        if t.id in marks:
+            break
+    return min(1.0, n / k.focus_turns)

@@ -314,7 +314,8 @@ def apply_adjustments(
                 seg.adjustment = new_total
                 store.save_segment_state(seg)
         else:
-            log = [c for _, _, c in store.tuning_log("global")]
+            # 人工回滚不计入潜意识的冷却（D26）
+            log = [c for _, _, c in store.tuning_log("global") if not c.reason.startswith("回滚第")]
             knobs, change = adjust_global(knobs, a.target, a.factor, now, a.reason, log)
             if change.applied:
                 store.save_global_knobs(knobs)
