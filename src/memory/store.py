@@ -7,6 +7,7 @@
 import json
 import re
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
@@ -198,6 +199,11 @@ class MemoryStore:
             {"ts": r["ts"], "archived": json.loads(r["archived"]), "kept": json.loads(r["kept"])}
             for r in self.db.execute("SELECT * FROM sweep_log ORDER BY id")
         ]
+
+    def iter_turns_newest_first(self) -> Iterator[ChatTurn]:
+        """所有对话的消息，从最新往回逐条取；新鲜记忆用，取到不新鲜为止。"""
+        for r in self.db.execute("SELECT * FROM turns ORDER BY ts DESC, id DESC"):
+            yield ChatTurn(r["id"], r["conversation_id"], r["role"], r["content"], r["ts"])
 
     def unsegmented_turns(self, conversation_id: int) -> list[ChatTurn]:
         """还没被切进任何片段的消息：第二层要处理的部分。"""

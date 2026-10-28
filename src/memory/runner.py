@@ -3,6 +3,8 @@
 - 熟悉期：只检查全局生命周期是否该启动（上下文用到约 70%，D24、D26）；启动时各模块的启动步骤由生命周期依次执行。
 - 运行期：对话停顿后整理（设想文档：整理在对话结束后或空闲时运行，避免边读边改）。
   停顿多久算"停顿"，暂定与记忆时钟的减速点相同（25 分钟，D21）。
+- 运行期：对话中途也分批整理（D31）：最早的话快要掉出新鲜记忆时，先把较早的一部分切段放进概率海，
+  避免长时间不停顿时出现"不新鲜、又没整理"的空档。见 memory.fresh.split_point。
 - 夜间：凌晨首次 tick 时合并近期重复的事件线（事件切分.md 第三层第 5 条）。
 """
 
@@ -14,7 +16,8 @@ from dataclasses import dataclass, field
 
 from contracts.llm import ChatModel
 from memory.boundaries import conversation_closed
-from memory.clock import DEFAULT_CLOCK
+from memory.clock import DEFAULT_CLOCK, clock_of
+from memory.fresh import split_point
 from memory.lifecycle import context_used, register
 from memory.merge import MergeReport, merge_recent_threads
 from memory.store import MemoryStore
@@ -51,12 +54,15 @@ def tick(
     if lifecycle.phase != RUNNING:
         report.started = lifecycle.maybe_start(now_ts, context_used(store), context_limit)
         return report
+    clock = clock_of(store)
     for cid in store.conversation_ids():
         turns = store.unsegmented_turns(cid)
         paused = turns and now_ts - turns[-1].ts >= k.pause
         unsummarized = not turns and store.segments(cid) and not store.get_conversation(cid).summary
         if paused or (unsummarized and conversation_closed(store, cid, now_ts)):
             report.consolidated[cid] = consolidate(store, model, cid, now_ts, rng)
+        elif turns and (until := split_point(store, cid, now_ts, clock)) is not None:
+            report.consolidated[cid] = consolidate(store, model, cid, now_ts, rng, until_ts=until)
     today = time.strftime("%Y-%m-%d", time.localtime(now_ts))
     if time.localtime(now_ts).tm_hour >= k.night_hour and store.get_meta("last_merge_day") != today:
         report.merged = merge_recent_threads(store, model, now_ts)

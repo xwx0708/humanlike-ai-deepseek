@@ -1,4 +1,4 @@
-"""新鲜记忆（D30）：还没整理的消息按记忆时钟衰减，强度不低于 floor 的稳定在场。"""
+"""新鲜记忆（D30、D31）：消息按记忆时钟衰减，强度不低于 floor 的稳定在场；对话中途分批整理。"""
 
 import pytest
 
@@ -51,12 +51,31 @@ def test_pause_barely_ages_fresh_memory(store):
     assert len(fresh_memories(store, 4 * MIN + 86400)) == 4
 
 
-def test_segmented_turns_are_no_longer_fresh(store):
-    """整理切段后变成普通片段，进入概率海；和浮现区不会重复。"""
+def test_segmented_turns_stay_fresh_while_strong(store):
+    """D31：切了段的消息，强度不低于 floor 时仍在新鲜记忆里；它的片段若也浮现，用 drop_fresh 去重。"""
+    from memory.fresh import drop_fresh
+    from memory.scanner import Surfaced
+
     c = store.new_conversation(0)
     turns = chat(store, c.id, 0, 4)
-    store.add_segment(Segment(None, c.id, "前两句", turns[0].ts, turns[1].ts, [t.id for t in turns[:2]]))
-    assert [m.turn.content for m in fresh_memories(store, 4 * MIN)] == ["第2句", "第3句"]
+    seg = store.add_segment(
+        Segment(None, c.id, "前两句", turns[0].ts, turns[1].ts, [t.id for t in turns[:2]])
+    )
+    fresh = fresh_memories(store, 4 * MIN)
+    assert len(fresh) == 4
+    surfaced = [Surfaced(seg.id, "前两句", 1.0, 0.0, 0.0)]
+    assert drop_fresh(store, surfaced, fresh) == []
+    assert drop_fresh(store, surfaced, fresh[2:]) == surfaced
+
+
+def test_split_point(store):
+    """最早一条未整理的消息约 2 小时（强度 0.92）时整理一批，整理到约 1 小时前（0.96）为止。"""
+    from memory.fresh import split_point
+
+    c = store.new_conversation(0)
+    chat(store, c.id, 0, 14, step=10 * MIN)  # 0～130 分钟
+    assert split_point(store, c.id, 115 * MIN) is None
+    assert split_point(store, c.id, 131 * MIN) == 70 * MIN
 
 
 def test_floor_and_clock_are_knobs(store):

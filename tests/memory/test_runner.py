@@ -91,3 +91,23 @@ def test_conversation_summary_gets_vaguer_as_segments_are_forgotten(store):
     prompt = fake.calls[0]["messages"][1].content
     assert "（模糊）妈妈、住院" in prompt and "换工作" not in prompt  # 移进档案的不再出现
     assert store.get_conversation(c.id).summary == "那天聊到他妈妈，好像在医院"
+
+
+def test_long_chat_is_consolidated_in_batches_without_pause(store):
+    """D31：连续聊 2 小时以上不停顿，最早的话快掉出新鲜记忆时，先把较早的一部分切段；最近约 1 小时留到下一批。"""
+    from memory.fresh import fresh_memories
+
+    life = Lifecycle(path=None, phase=RUNNING)
+    store.set_meta("last_merge_day", time.strftime("%Y-%m-%d", time.localtime(_noon())))
+    c = store.new_conversation(_noon())
+    turns = [
+        store.add_turn(c.id, "user", f"第{i}句", _noon() + i * 10 * MIN) for i in range(14)
+    ]  # 0～130 分钟
+    assert tick(store, FakeModel([]), _noon() + 100 * MIN, life, 100_000).consolidated == {}  # 还不到 2 小时
+    seg8 = {"segments": [{**SEG["segments"][0], "messages": list(range(1, 9))}]}
+    r = tick(store, FakeModel([seg8, NEW]), _noon() + 131 * MIN, life, 100_000)
+    assert list(r.consolidated) == [c.id]
+    assert store.segments(c.id)[0].message_ids == [t.id for t in turns[:8]]  # 70 分钟及以前的
+    assert len(store.unsegmented_turns(c.id)) == 6
+    assert len(fresh_memories(store, _noon() + 131 * MIN)) == 14  # 切了段的，强度够时仍在新鲜记忆里
+    assert tick(store, FakeModel([]), _noon() + 132 * MIN, life, 100_000).consolidated == {}  # 下一批还早

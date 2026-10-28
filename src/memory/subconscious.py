@@ -65,8 +65,10 @@ def consolidate(
     sweep_forgotten: bool = True,
     scorer: EmotionScorer | None = None,
     baseline: EmotionBaseline | None = None,
+    until_ts: float | None = None,
 ) -> ConsolidationReport:
-    """rng：画像矛盾时掷骰子、批量遗忘时随机挑留下的 5% 用；测试时传入固定种子的 random.Random 以便复现。
+    """until_ts：只整理这个时刻及以前的消息；对话中途分批整理时用，最近的话留到下一批（D31）。
+    rng：画像矛盾时掷骰子、批量遗忘时随机挑留下的 5% 用；测试时传入固定种子的 random.Random 以便复现。
     sweep_forgotten：最后是否批量遗忘；启动时补整理熟悉期的对话，不该在中途遗忘（D24）。
     scorer / baseline：情绪模块提供的打分和基线（记忆和情绪衔接的地方，D27）。没有时用暂行做法：
     切段提示词一起打的分、基线 0。"""
@@ -74,6 +76,8 @@ def consolidate(
     rng = rng or random.Random()
     report = ConsolidationReport()
     turns = store.unsegmented_turns(conversation_id)
+    if until_ts is not None:
+        turns = [t for t in turns if t.ts <= until_ts]
     if not turns:
         _mark_last_segment(store, conversation_id, now_ts)  # 已经切完的对话，结束后也要补标末个片段
         _summarize_if_closed(store, model, conversation_id, now_ts)
