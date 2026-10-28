@@ -3,6 +3,8 @@ name = "humanlike-ai"
 version = "0.0.1"
 description = "类人 AI：记忆、情绪、回应、行动"
 requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"  # D33：AstrBot 是 AGPL-3.0，插件在它里面运行
+license-files = ["LICENSE"]
 dependencies = [
     "jieba>=0.42",  # 事件线候选的关键词检索（用户方案：jieba 分词 + BM25）
 ]
