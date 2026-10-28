@@ -16,7 +16,8 @@ import time
 from pathlib import Path
 
 for stream in (sys.stdout, sys.stderr):  # 有的控制台编码打不出中文，至少别因此报错
-    stream.reconfigure(errors="replace")
+    if stream is not None:  # 用 pythonw 运行（桌面快捷方式）时没有控制台，stdout 为 None
+        stream.reconfigure(errors="replace")
 
 HERE = Path(__file__).resolve().parent
 PORT = 8790

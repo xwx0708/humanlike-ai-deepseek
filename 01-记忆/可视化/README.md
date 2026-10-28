@@ -4,7 +4,7 @@
 
 ## 打开
 
-双击 `打开副屏.bat`（或运行 `python open_on_second_screen.py [页面]`）。它会：
+双击桌面上的「记忆可视化」快捷方式（不会弹出命令行窗口），或者双击本文件夹里的 `打开副屏.bat`，或者运行 `python open_on_second_screen.py [页面]`。它会：
 
 1. 如果后台服务器没在运行，就启动 `serve.py`（端口 8790，只监听本机，无窗口）；
 2. 用单独的 Edge 配置打开一个无地址栏的窗口，移到副屏并最大化。不指定页面时，窗口已开着就只移回副屏，没开就打开 `forgetting.html`；指定页面时，关掉旧窗口，在该页面重新打开。
@@ -28,4 +28,5 @@
 | `demo.html` | 概率海 3D 演示（假数据） |
 | `serve.py` | 带自动刷新的本地服务器 |
 | `open_on_second_screen.py`、`打开副屏.bat` | 启动服务器，并在副屏打开窗口 |
+| `make_shortcut.py` | 在桌面创建「记忆可视化」快捷方式；快捷方式丢了就再运行一次 |
 | `vendor/` | 第三方库 3d-force-graph，来源见其中的 README |
