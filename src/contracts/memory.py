@@ -64,6 +64,7 @@ class Segment:
     at_edge: bool = False  # 是否为一场对话的首个或末个片段
     state: str = "active"  # active：在概率海里；forgotten：已遗忘，只剩残影
     trace: str = ""  # 残影：遗忘后留下的极简概括
+    remember_requested: bool = False  # 用户明确要求记住（所在事件线免竞争常驻，D17）
 
 
 @dataclass
@@ -78,6 +79,8 @@ class Thread:
     segment_ids: list[int] = field(default_factory=list)
     person_ids: list[int] = field(default_factory=list)
     merged_into: int | None = None  # 夜间合并后指向保留的那条
+    ongoing: bool = True  # 这件事是否还在进行（潜意识模型更新摘要时判断）；进行中的常驻得分乘系数（D17）
+    resident_since: float | None = None  # 进入常驻栏的时间；None 表示在普通记忆池（D17）
 
 
 PROFILE_CATEGORIES = (
@@ -104,6 +107,8 @@ class ProfileFact:
     last_ts: float  # 最近一次被提到
     mentions: int = 1
     segment_ids: list[int] = field(default_factory=list)  # 出处
+    archived_ts: float | None = None  # 被新说法覆盖、移进档案的时间（决策 D16）；None 表示仍在画像里
+    superseded_by: int | None = None  # 覆盖它的那条事实
 
 
 @dataclass
