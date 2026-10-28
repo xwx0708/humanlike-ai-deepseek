@@ -2,4 +2,5 @@ name: astrbot_plugin_humanlike
 desc: 类人 AI：记忆系统接管上下文，只陪一个人
 version: 0.1.0
 author: wx0725
+license: AGPL-3.0-or-later
 repo: ""
