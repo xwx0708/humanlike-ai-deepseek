@@ -8,7 +8,7 @@
 
 | 区域 | 负责的对话 | 内容 |
 |---|---|---|
-| `00-总纲/`、`src/contracts/`、根目录文件（本文件、`pyproject.toml`、`.gitignore` 等） | 总纲对话 | 愿景、架构、接口约定、术语、决策日志、代码规范 |
+| `00-总纲/`、`src/contracts/`、`src/llm/`、`tests/llm/`、根目录文件（本文件、`pyproject.toml`、`.gitignore` 等） | 总纲对话 | 愿景、架构、接口约定、术语、决策日志、代码规范；模型调用接口（各模块共用） |
 | `01-记忆/`、`src/memory/`、`tests/memory/` | 记忆对话 | 概率海、扫描器、潜意识整理、档案 |
 | `02-情绪/`、`src/emotion/`、`tests/emotion/` | 情绪对话 | 情绪打分、情绪基线、（以后）AI 自身情绪 |
 | `03-回应/`、`src/response/`、`tests/response/` | 回应对话 | 思考模型、对话组织、语气 |
