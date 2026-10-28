@@ -42,7 +42,7 @@
 需要：Docker；本机装好 [Ollama](https://ollama.com) 并有显卡（潜意识模型约十几 GB）；一个思考模型的 API 密钥；一个 QQ 小号。
 
 ```bash
-git clone https://github.com/wx0725/humanlike-ai.git
+git clone https://github.com/xwx0708/humanlike-ai.git
 cd humanlike-ai
 cp .env.example .env            # 至少填 OWNER_QQ：陪的那个人的 QQ 号
 ollama pull qwen3.8:27b-q4_K_M  # 和 .env 里的 SUBCONSCIOUS_MODEL 一致
