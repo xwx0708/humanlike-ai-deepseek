@@ -1,4 +1,4 @@
-"""模型调用的具体实现：DeepSeek、Ollama、FakeModel（测试用）。
+"""模型调用的具体实现：通用的 OpenAI 兼容接口、DeepSeek、Ollama、FakeModel（测试用）。
 
 思考模型和潜意识模型都只依赖 contracts.llm.ChatModel 这个通用接口，各自用哪家、哪个模型
 由配置决定，可以随意搭配（决策 D13）。默认：思考模型用 DeepSeek，潜意识模型用本地 Ollama 上的 Qwen。
@@ -13,12 +13,19 @@ from contracts.llm import ChatModel
 from llm.deepseek import DeepSeekModel
 from llm.fake import FakeModel
 from llm.ollama import OllamaModel
+from llm.openai_compat import OpenAICompatModel
 from llm.settings import PROVIDERS, Settings, load_settings
 
 
 def make_model(provider: str, model: str, settings: Settings | None = None) -> ChatModel:
     """按"哪家 + 哪个模型"创建模型。新增一家时，在这里加一个分支。"""
     s = settings or load_settings()
+    if provider == "openai_compat":
+        if not s.openai_compat_base_url:
+            raise RuntimeError("没有找到 OPENAI_COMPAT_BASE_URL：请设为环境变量，或写进项目根目录的 .env")
+        return OpenAICompatModel(
+            api_key=s.openai_compat_api_key, model=model, base_url=s.openai_compat_base_url
+        )
     if provider == "deepseek":
         if not s.deepseek_api_key:
             raise RuntimeError("没有找到 DEEPSEEK_API_KEY：请设为环境变量，或写进项目根目录的 .env")
@@ -45,4 +52,12 @@ def subconscious_model() -> ChatModel:
     return make_model(s.subconscious_provider, s.subconscious_model, s)
 
 
-__all__ = ["DeepSeekModel", "FakeModel", "OllamaModel", "make_model", "subconscious_model", "thinking_model"]
+__all__ = [
+    "DeepSeekModel",
+    "FakeModel",
+    "OllamaModel",
+    "OpenAICompatModel",
+    "make_model",
+    "subconscious_model",
+    "thinking_model",
+]

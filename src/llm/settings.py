@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-PROVIDERS = ("deepseek", "ollama")
+PROVIDERS = ("openai_compat", "deepseek", "ollama")
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,9 @@ class Settings:
     subconscious_provider: str = "ollama"
     subconscious_model: str = "qwen3.8:27b-q4_K_M"
     # 各家的连接设置，两个角色共用
+    # 通用：任何 OpenAI 兼容接口（D28）。填地址、密钥就能用，不限于 DeepSeek
+    openai_compat_api_key: str = ""
+    openai_compat_base_url: str = ""
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_thinking: bool = False  # 开启后先思考再回答，更慢、更费 token

@@ -1,9 +1,9 @@
-"""DeepSeek、Ollama 客户端的请求格式、解析、重试和报错。不联网。"""
+"""通用 OpenAI 兼容接口、DeepSeek、Ollama 客户端的请求格式、解析、重试和报错。不联网。"""
 
 import pytest
 
 from contracts.llm import LLMError, system, user
-from llm import DeepSeekModel, FakeModel, OllamaModel
+from llm import DeepSeekModel, FakeModel, OllamaModel, OpenAICompatModel
 from llm._http import post_json
 from llm.settings import load_settings
 
@@ -195,3 +195,27 @@ def test_settings_bool(tmp_path, monkeypatch):
     assert load_settings(tmp_path / "none.env").deepseek_thinking is True
     monkeypatch.setenv("DEEPSEEK_THINKING", "0")
     assert load_settings(tmp_path / "none.env").deepseek_thinking is False
+
+
+def test_openai_compat_sends_no_vendor_fields(server):
+    """通用接口（D28）：只发 OpenAI 标准字段，不带 DeepSeek 的 thinking；没有密钥时不发鉴权头（本地服务）。"""
+    server.responses.append((200, deepseek_ok("你好")))
+    r = OpenAICompatModel("", "qwen-plus", base_url=server.url + "/v1/").chat([user("hi")])
+    req = server.requests[0]
+    assert req["path"] == "/v1/chat/completions"
+    assert "thinking" not in req["body"] and "Authorization" not in req["headers"]
+    assert (req["body"]["model"], r.text) == ("qwen-plus", "你好")
+
+
+def test_openai_compat_from_settings(monkeypatch):
+    from llm import thinking_model
+
+    monkeypatch.setenv("THINKING_PROVIDER", "openai_compat")
+    monkeypatch.setenv("THINKING_MODEL", "kimi-k2")
+    monkeypatch.setenv("OPENAI_COMPAT_BASE_URL", "https://example.com/v1")
+    monkeypatch.setenv("OPENAI_COMPAT_API_KEY", "sk-x")
+    m = thinking_model()
+    assert isinstance(m, OpenAICompatModel) and not isinstance(m, DeepSeekModel) and m.name == "kimi-k2"
+    monkeypatch.setenv("OPENAI_COMPAT_BASE_URL", "")
+    with pytest.raises(RuntimeError, match="OPENAI_COMPAT_BASE_URL"):
+        thinking_model()
