@@ -3,6 +3,7 @@
 import pytest
 
 from contracts.memory import EmotionScore, Segment
+from memory.clock import clock_of
 from memory.resident import (
     RESIDENT_HEADER,
     ResidentKnobs,
@@ -68,7 +69,7 @@ def test_score_weights_and_ongoing_factor():
     assert score(stats(importance=1), 0) == pytest.approx(0.35 + 0.25)  # 刚被提及：活跃度 1
     assert score(stats(arousal=1), 0) == pytest.approx(0.25 + 0.25)
     assert score(stats(recalls=3), 0) == pytest.approx(0.25 + 0.15 * 0.5)
-    assert score(stats(), 14 * DAY) == pytest.approx(0.25 * 0.5)  # 14 天没提，活跃度减半
+    assert score(stats(), 14) == pytest.approx(0.25 * 0.5)  # 14 天没提，活跃度减半
     assert score(stats(importance=1, ongoing=True), 0) == pytest.approx((0.35 + 0.25) * 1.5)
 
 
@@ -83,6 +84,23 @@ def test_three_kinds_are_exempt_from_competition(store):
     assert (
         set(store.resident_threads()) == {profiled, asked, repeated} and plain not in store.resident_threads()
     )
+
+
+def test_exempt_stays_until_user_asks(store):
+    """D18：免竞争一旦成立就一直保持；只有用户要求修改才解除，解除后照常竞争，不会被自动标回。"""
+    tid, [seg] = thread(store, "花生过敏", 0)
+    fid = store.add_profile_fact(None, "过敏与禁忌", "对花生过敏", 0, seg.id)
+    k = ResidentKnobs(seats=0)
+    refresh_residents(store, 0, k)
+    new = store.add_profile_fact(None, "过敏与禁忌", "对花生不过敏了", 1)
+    store.archive_profile_fact(fid, new, 1)  # 画像事实被覆盖进档案：条件不再满足
+    rep = refresh_residents(store, 100 * DAY, k)
+    assert rep.exempt == {tid: "涉及用户真实信息"} and tid in store.resident_threads()
+
+    store.release_exempt(tid, 101 * DAY, "用户说不用一直记着")
+    rep = refresh_residents(store, 101 * DAY, k)
+    assert tid not in rep.exempt and tid not in store.resident_threads()
+    assert [e["action"] for e in store.resident_log()][-2:] == ["解除免竞争", "退出"]
 
 
 def test_competition_takes_top_seats_and_demotes_losers(store):
@@ -111,8 +129,13 @@ def test_resident_is_not_forgotten_and_demotion_does_not_reset(store):
     _newer, _ = thread(store, "更重要的事", 60 * DAY, importance=1, arousal=1)
     refresh_residents(store, 60 * DAY, k)
     assert tid not in store.resident_threads()
-    # 退回普通记忆池：遗忘从最近一次被提及（第 0 天）开始算，60 天、半衰期 7 天，早已低于遗忘线
-    assert effective_strength(store, store.get_segment(seg.id), 60 * DAY) == pytest.approx(0.5 ** (60 / 7))
+    # 退回普通记忆池：遗忘从最近一次被提及（第 0 天）开始算，经过的时间用记忆时钟量（D21）。
+    # 中间 60 天没有对话，记忆时间只走了"停顿后 25 分钟 + 减速的 24 小时"，几乎没忘
+    elapsed = clock_of(store).elapsed_days(0, 60 * DAY)
+    assert elapsed < 0.3
+    assert effective_strength(store, store.get_segment(seg.id), 60 * DAY) == pytest.approx(
+        0.5 ** (elapsed / 7)
+    )
     assert store.get_segment(seg.id).last_recall_ts == 0  # 退回时不重置
 
 

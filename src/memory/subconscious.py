@@ -4,12 +4,13 @@
 """
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from contracts.llm import ChatModel
 from contracts.memory import Segment, days
 from memory.boundaries import conversation_closed
 from memory.candidates import select_candidates
+from memory.clock import MemoryClock, clock_of
 from memory.forgetting import clamp_adjustment, initial_half_life, relative_arousal
 from memory.profile import EVOKE, OVERWRITE, resolve_conflict
 from memory.prompts import (
@@ -34,6 +35,7 @@ from memory.prompts import (
 )
 from memory.resident import ResidentReport, effective_strength, refresh_residents
 from memory.store import MemoryStore
+from memory.sweep import SweepReport, sweep
 from memory.tuning import GlobalChange, adjust_global
 
 
@@ -45,6 +47,7 @@ class ConsolidationReport:
     changes: list[tuple[str, str, GlobalChange]] = field(default_factory=list)
     conflicts: list[tuple[int, int, str]] = field(default_factory=list)  # (旧事实, 新事实, 结果)
     residents: ResidentReport | None = None  # 整理后的常驻栏变化（D17）
+    sweep: SweepReport | None = None  # 攒够已遗忘片段时的批量清理（D22）
 
 
 def consolidate(
@@ -54,7 +57,7 @@ def consolidate(
     now_ts: float,
     rng: random.Random | None = None,
 ) -> ConsolidationReport:
-    """rng：画像矛盾时掷骰子用；测试时传入固定种子的 random.Random 以便复现。"""
+    """rng：画像矛盾时掷骰子、批量遗忘时随机挑留下的 5% 用；测试时传入固定种子的 random.Random 以便复现。"""
     rng = rng or random.Random()
     report = ConsolidationReport()
     turns = store.unsegmented_turns(conversation_id)
@@ -137,6 +140,7 @@ def consolidate(
         report.threads[sid] = decision
 
     # 3. 修改参数：拿新片段所在事件线上的旧片段给潜意识模型看
+    clock = clock_of(store)
     adjusted: set[str] = set()  # 同一轮整理里，每条旧记忆最多调一次，避免几个新片段为同一个理由重复加码
     for sid in report.segment_ids:
         seg = store.get_segment(sid)
@@ -145,8 +149,9 @@ def consolidate(
             for t in store.threads_of_segment(sid)
             for s in store.get_thread(t).segment_ids
             if s not in report.segment_ids
+            and store.get_segment(s).state != "archived"  # 移进档案的不再出现（D22）
         }
-        related = [_card(store, store.get_segment(s), now_ts) for s in sorted(related_ids)]
+        related = [_card(store, store.get_segment(s), now_ts, clock) for s in sorted(related_ids)]
         if not related:
             continue  # 暂行：没有相关旧记忆时不调参（全局参数的调整需要长期证据，以后另设流程）
         r = model.chat(
@@ -170,6 +175,7 @@ def consolidate(
 
     _mark_last_segment(store, conversation_id, now_ts)
     report.residents = refresh_residents(store, now_ts)  # 新片段、新事实可能改变常驻栏（D17）
+    report.sweep = sweep(store, model, now_ts, rng=rng)  # 已遗忘的攒够了就批量清理（D22）
     return report
 
 
@@ -182,7 +188,8 @@ def _handle_conflicts(store, model, rng, new_id, new_fact, about, olds, now_ts, 
     )
     ids, reason = parse_conflicts(r.data, list(olds))
     for old_id in ids:
-        result = resolve_conflict(olds[old_id], now_ts, rng)
+        old = olds[old_id]
+        result = resolve_conflict(old, clock_of(store).elapsed_days(old.last_ts, now_ts), rng)
         if result.outcome == EVOKE:
             store.add_evocation(old_id, new_id, now_ts)
         elif result.outcome == OVERWRITE:
@@ -208,7 +215,11 @@ def _mark_last_segment(store: MemoryStore, conversation_id: int, now_ts: float) 
 
 def _update_summary(store: MemoryStore, model: ChatModel, thread_id: int) -> None:
     t = store.get_thread(thread_id)
-    history = [store.get_segment(s) for s in t.segment_ids[-10:]]  # 最近 10 个片段就够概括来龙去脉
+    history = [  # 最近 10 个片段就够概括来龙去脉；移进档案的不算，抽象化的只给关键词（D22）
+        s if s.state == "active" else replace(s, title=f"（只剩关键词）{s.trace}")
+        for s in (store.get_segment(i) for i in t.segment_ids)
+        if s.state != "archived"
+    ][-10:]
     r = model.chat(build_summary_prompt(t.title, t.summary, history), schema=SUMMARY_SCHEMA, temperature=0)
     summary, title, ongoing = parse_summary(r.data, t.title)
     store.update_thread(thread_id, title=title, summary=summary, ongoing=ongoing)
@@ -226,8 +237,13 @@ def apply_adjustments(
             seg = store.get_segment(int(a.target))
             new_total = clamp_adjustment(seg.adjustment, a.factor, knobs)
             requested = seg.adjustment * a.factor
-            applied = new_total != seg.adjustment
             note = "" if abs(new_total - requested) < 1e-9 else "已限幅"
+            floor = min(
+                1.0, seg.adjustment
+            )  # D19：事件完结前，系数不能调到 1 以下（已经低于 1 的不再往下调）
+            if new_total < floor and not is_finished(store, seg.id):
+                new_total, note = floor, "事件未完结，不允许系数小于 1"
+            applied = new_total != seg.adjustment
             change = GlobalChange(
                 "adjustment", now, seg.adjustment, requested, new_total, applied, a.reason, note
             )
@@ -256,12 +272,19 @@ def _segment_brief(store: MemoryStore, seg: Segment) -> dict:
     }
 
 
-def _card(store: MemoryStore, seg: Segment, now_ts: float) -> MemoryCard:
+def _card(store: MemoryStore, seg: Segment, now_ts: float, clock: MemoryClock) -> MemoryCard:
     return MemoryCard(
         seg.id,
-        seg.title,
+        seg.title if seg.state == "active" else f"（只剩关键词）{seg.trace}",
         days(now_ts - seg.start_ts),
-        effective_strength(store, seg, now_ts),  # 常驻的线不遗忘（D17）
+        effective_strength(store, seg, now_ts, clock),  # 常驻的线不遗忘（D17）
         seg.half_life,
         [store.person(p).name for p in seg.person_ids],
+        is_finished(store, seg.id),
     )
+
+
+def is_finished(store: MemoryStore, segment_id: int) -> bool:
+    """片段所在的事件线是否都已完结（不在进行中）。不属于任何事件线的，不算完结。"""
+    tids = store.threads_of_segment(segment_id)
+    return bool(tids) and not any(store.get_thread(t).ongoing for t in tids)

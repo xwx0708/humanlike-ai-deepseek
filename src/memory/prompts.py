@@ -1,4 +1,4 @@
-"""潜意识模型的四个提示词：切段第二层、判断事件线归属、修改函数参数、更新事件线摘要。
+"""潜意识模型的提示词：切段第二层、判断事件线归属、修改函数参数、更新事件线摘要、画像矛盾、遗忘后提取关键词。
 
 每个任务由三部分组成：build_*（拼提示词）、*_SCHEMA（约束输出的 JSON 格式）、parse_*（校验结果）。
 模型的输出一律不直接信任：越界的数值收回范围内，不存在的 id 丢掉，漏掉的消息补回去。
@@ -334,6 +334,8 @@ TUNING_SYSTEM = """你是一个聊天 AI 的"潜意识"，负责调节它的记�
 1. 单条记忆（scope = "memory"，target = 记忆编号）：factor 是半衰期的倍数，大于 1 记得更久，小于 1 忘得更快。
    最典型的情况：新信息让一件旧事变重要了。例如半年前随口说"我妈最近老咳嗽"，今天说"我妈住院了"，
    那条旧记忆应该拉长（factor 2～3）。
+   **只有标着"事件已完结"的记忆才可以缩短（factor 小于 1）**，例如事情已经解决，其中的细节可以忘得快一些；
+   标着"事件进行中"的只能拉长或不动。
 2. 全局参数（scope = "global"，target = 参数名）：只有在长期、反复的证据表明整体记性该调时才提，单凭一个片段几乎不该提。
    可选参数：{knobs}
 
@@ -383,6 +385,7 @@ class MemoryCard:
     strength: float
     half_life: float
     people: list[str] = field(default_factory=list)
+    finished: bool = False  # 所在事件线都已完结（D19：只有完结后才允许把系数调到小于 1）
 
 
 def build_tuning_prompt(
@@ -391,7 +394,7 @@ def build_tuning_prompt(
     knob_desc = "、".join(f"{k}（当前 {getattr(knobs, k):g}）" for k in TUNABLE)
     mems = "\n".join(
         f"[{m.id}] {m.title}｜{m.age_days:.0f} 天前｜强度 {m.strength:.2f}｜半衰期 {m.half_life:.0f} 天"
-        f"｜人物：{'、'.join(m.people) or '无'}"
+        f"｜人物：{'、'.join(m.people) or '无'}｜{'事件已完结' if m.finished else '事件进行中'}"
         for m in related
     )
     seg = json.dumps(new_segment, ensure_ascii=False)
@@ -502,3 +505,53 @@ def parse_conflicts(data: dict[str, Any], old_ids: list[int]) -> tuple[list[int]
     valid = set(old_ids)
     ids = [i for i in dict.fromkeys(data.get("conflicts", [])) if i in valid]
     return ids, str(data.get("reason", "")).strip()
+
+
+# ====================================================================================
+# 六、遗忘后抽象化：只提取简要关键词（决策 D22）
+# ====================================================================================
+
+KEYWORDS_SYSTEM = """你是一个聊天 AI 的"潜意识"。下面这些记忆已经快忘了，每条只留几个简要的关键词，
+细节都不要了。以后它们只以这几个词的样子留在记忆里。
+
+## 规则
+- 每条 2～4 个关键词，每个不超过 6 个字。
+- 留下最能让人隐约想起这件事的词：涉及的人、事情的核心、当时的情绪。例如"妈妈、住院、担心"。
+- 不要写成句子，不要编造原文没有的东西。
+
+只输出 JSON。"""
+
+KEYWORDS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "keywords": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["id", "keywords"],
+            },
+        }
+    },
+    "required": ["items"],
+}
+
+
+def build_keywords_prompt(memories: list[tuple[int, str, str]]) -> list[Message]:
+    """memories：(编号, 标题, 原文节选)。"""
+    body = "\n\n".join(f"[{i}] {title}\n原文：{text}" for i, title, text in memories)
+    return [system(KEYWORDS_SYSTEM), user(body)]
+
+
+def parse_keywords(data: dict[str, Any], ids: list[int]) -> dict[int, list[str]]:
+    """每条最多留 4 个、每个最多 6 个字；模型漏掉的条目不在结果里，由调用方兜底。"""
+    valid, out = set(ids), {}
+    for raw in data.get("items", []):
+        i = raw.get("id")
+        words = [str(w).strip()[:6] for w in raw.get("keywords", []) if str(w).strip()]
+        if i in valid and words:
+            out[i] = list(dict.fromkeys(words))[:4]
+    return out

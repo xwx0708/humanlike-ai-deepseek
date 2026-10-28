@@ -6,12 +6,16 @@
   当下正在进行的事再乘一个系数。排名靠后的退回普通记忆池，照常参与遗忘和浮现；
   遗忘从最近一次被提及开始算，退回时不重置。
 具体数值除四个权重外都是暂定的旋钮。
+
+免竞争一旦成立就一直保持，除非用户要求修改（决策 D18）：之后即使不再满足条件
+（例如画像事实被覆盖进档案），也不退出。用户要求时由 MemoryStore.release_exempt 解除。
 """
 
 from dataclasses import dataclass
 
-from contracts.memory import Segment, days
-from memory.forgetting import Trace
+from contracts.memory import Segment
+from memory.clock import MemoryClock, clock_of
+from memory.forgetting import strength
 from memory.store import MemoryStore
 
 
@@ -31,9 +35,10 @@ class ResidentKnobs:
 DEFAULT_KNOBS = ResidentKnobs()
 
 
-def score(stats: dict, now_ts: float, k: ResidentKnobs = DEFAULT_KNOBS) -> float:
-    """竞争名额用的得分，0～1（乘进行中系数后可能超过 1）。stats 来自 MemoryStore.thread_stats。"""
-    activity = 0.5 ** (max(0.0, days(now_ts - stats["updated_ts"])) / k.activity_half_life)
+def score(stats: dict, idle_days: float, k: ResidentKnobs = DEFAULT_KNOBS) -> float:
+    """竞争名额用的得分，0～1（乘进行中系数后可能超过 1）。stats 来自 MemoryStore.thread_stats；
+    idle_days：最近一次被提及后经过的记忆时间（D21）。"""
+    activity = 0.5 ** (max(0.0, idle_days) / k.activity_half_life)
     recall = stats["recalls"] / (stats["recalls"] + k.recall_saturation)
     s = (
         k.w_importance * stats["importance"]
@@ -63,16 +68,22 @@ class ResidentReport:
     left: list[int]
 
 
-def refresh_residents(store: MemoryStore, now_ts: float, k: ResidentKnobs = DEFAULT_KNOBS) -> ResidentReport:
+def refresh_residents(
+    store: MemoryStore, now_ts: float, k: ResidentKnobs = DEFAULT_KNOBS, clock: MemoryClock | None = None
+) -> ResidentReport:
     """重新计算常驻栏：免竞争的全部常驻，其余按得分取前 k.seats 名；进出都记日志。"""
+    clock = clock or clock_of(store)
     exempt, scores = {}, {}
+    marks = store.exempt_marks()
     for tid in store.live_threads():
         stats = store.thread_stats(tid)
-        reason = exempt_reason(store, tid, stats, k)
+        reason = marks[tid] if tid in marks else exempt_reason(store, tid, stats, k)
+        if reason and tid not in marks:
+            store.mark_exempt(tid, reason)
         if reason:
             exempt[tid] = reason
         else:
-            scores[tid] = score(stats, now_ts, k)
+            scores[tid] = score(stats, clock.elapsed_days(stats["updated_ts"], now_ts), k)
     ranked = sorted(scores.items(), key=lambda x: -x[1])
     winners = {tid: (i + 1, s) for i, (tid, s) in enumerate(ranked[: k.seats])}
 
@@ -94,11 +105,14 @@ def is_resident_segment(store: MemoryStore, seg: Segment) -> bool:
     return any(t in resident for t in store.threads_of_segment(seg.id))
 
 
-def effective_strength(store: MemoryStore, seg: Segment, now_ts: float) -> float:
-    """片段当前的强度。所在事件线常驻时不遗忘（强度视为 1）；否则按遗忘曲线，从最近一次被提及开始算。"""
+def effective_strength(
+    store: MemoryStore, seg: Segment, now_ts: float, clock: MemoryClock | None = None
+) -> float:
+    """片段当前的强度。所在事件线常驻时不遗忘（强度视为 1）；否则按遗忘曲线，从最近一次被提及开始算，
+    经过的时间用记忆时钟量（D21）：不对话就不遗忘。"""
     if is_resident_segment(store, seg):
         return 1.0
-    return Trace(seg.half_life, days(seg.last_recall_ts), seg.recall_count).strength_at(days(now_ts))
+    return strength(seg.half_life, (clock or clock_of(store)).elapsed_days(seg.last_recall_ts, now_ts))
 
 
 RESIDENT_HEADER = "以下是你一直记得的事。作为背景知道就好，不必刻意提起；只有话题相关时才自然地用上。"

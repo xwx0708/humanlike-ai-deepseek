@@ -51,7 +51,13 @@ CREATE TABLE IF NOT EXISTS segment_links (
 CREATE TABLE IF NOT EXISTS threads (
     id INTEGER PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL,
     created_ts REAL NOT NULL, updated_ts REAL NOT NULL, merged_into INTEGER REFERENCES threads(id),
-    ongoing INTEGER NOT NULL DEFAULT 1, resident_since REAL
+    ongoing INTEGER NOT NULL DEFAULT 1, resident_since REAL, exempt TEXT
+);
+CREATE TABLE IF NOT EXISTS sweep_log (
+    id INTEGER PRIMARY KEY, ts REAL NOT NULL, archived TEXT NOT NULL, kept TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS busy_spans (
+    id INTEGER PRIMARY KEY, start_ts REAL NOT NULL, end_ts REAL NOT NULL, note TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS resident_log (
     id INTEGER PRIMARY KEY, thread_id INTEGER NOT NULL REFERENCES threads(id), ts REAL NOT NULL,
@@ -108,6 +114,9 @@ class MemoryStore:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(threads)")}
+        if "exempt" not in cols:  # D18 之前建的库
+            self.db.execute("ALTER TABLE threads ADD COLUMN exempt TEXT")
 
     def close(self) -> None:
         self.db.close()
@@ -151,6 +160,24 @@ class MemoryStore:
             (conversation_id, after_id),
         )
         return [ChatTurn(r["id"], r["conversation_id"], r["role"], r["content"], r["ts"]) for r in rows]
+
+    def turn_text(self, turn_ids: list[int]) -> str:
+        marks = ",".join("?" * len(turn_ids)) or "NULL"
+        rows = self.db.execute(f"SELECT role, content FROM turns WHERE id IN ({marks}) ORDER BY id", turn_ids)
+        return "\n".join(f"{'他' if r[0] == 'user' else 'AI'}：{r[1]}" for r in rows)
+
+    def log_sweep(self, ts: float, archived: list[int], kept: dict[int, list[str]]) -> None:
+        """一次批量遗忘：哪些移进档案，哪些抽象成了关键词（D22）。"""
+        self._insert(
+            "INSERT INTO sweep_log (ts, archived, kept) VALUES (?, ?, ?)",
+            (ts, json.dumps(archived), json.dumps(kept, ensure_ascii=False)),
+        )
+
+    def sweep_log(self) -> list[dict[str, Any]]:
+        return [
+            {"ts": r["ts"], "archived": json.loads(r["archived"]), "kept": json.loads(r["kept"])}
+            for r in self.db.execute("SELECT * FROM sweep_log ORDER BY id")
+        ]
 
     def unsegmented_turns(self, conversation_id: int) -> list[ChatTurn]:
         """还没被切进任何片段的消息：第二层要处理的部分。"""
@@ -290,6 +317,19 @@ class MemoryStore:
         )
         return [(r["from_id"], r["to_id"], r["kind"]) for r in rows]
 
+    # ---------- 记忆时钟用的活动记录（D21） ----------
+
+    def add_busy_span(self, start_ts: float, end_ts: float, note: str = "") -> None:
+        """智能体处理用户布置的任务的时段。这段时间里记忆时间照常流动，不因没有消息而减速。"""
+        self._insert(
+            "INSERT INTO busy_spans (start_ts, end_ts, note) VALUES (?, ?, ?)", (start_ts, end_ts, note)
+        )
+
+    def activity(self) -> list[tuple[float, float]]:
+        """所有活动区间：每条消息是一个点，每个任务是一段。"""
+        turns = [(r[0], r[0]) for r in self.db.execute("SELECT ts FROM turns")]
+        return turns + [(r[0], r[1]) for r in self.db.execute("SELECT start_ts, end_ts FROM busy_spans")]
+
     # ---------- 事件线 ----------
 
     def new_thread(self, title: str, summary: str, ts: float) -> Thread:
@@ -406,6 +446,28 @@ class MemoryStore:
                 (tid, ts, "进入" if resident else "退出", reason, score),
             )
 
+    def exempt_marks(self) -> dict[int, str]:
+        """已记下的免竞争标记（D18）：原因；空字符串表示用户要求解除过，不再自动免竞争。"""
+        return {
+            r[0]: r[1]
+            for r in self.db.execute(
+                "SELECT id, exempt FROM threads WHERE exempt IS NOT NULL AND merged_into IS NULL"
+            )
+        }
+
+    def mark_exempt(self, tid: int, reason: str) -> None:
+        with self.db:
+            self.db.execute("UPDATE threads SET exempt = ? WHERE id = ?", (reason, tid))
+
+    def release_exempt(self, tid: int, ts: float, reason: str) -> None:
+        """用户要求修改时解除免竞争（D18）。之后这条线和其他线一样竞争名额，不会再被自动标回免竞争。"""
+        with self.db:
+            self.db.execute("UPDATE threads SET exempt = '' WHERE id = ?", (tid,))
+            self.db.execute(
+                "INSERT INTO resident_log (thread_id, ts, action, reason, score) VALUES (?, ?, ?, ?, NULL)",
+                (tid, ts, "解除免竞争", reason),
+            )
+
     def resident_log(self) -> list[dict[str, Any]]:
         return [dict(r) for r in self.db.execute("SELECT * FROM resident_log ORDER BY id")]
 
@@ -446,7 +508,10 @@ class MemoryStore:
     def thread_card(self, tid: int) -> dict[str, Any]:
         """给潜意识模型看的事件线卡片：只含标题、一句话摘要、最近片段标题、涉及人物。"""
         t = self.get_thread(tid)
-        latest = self.get_segment(t.segment_ids[-1]).title if t.segment_ids else ""
+        visible = [s for s in map(self.get_segment, t.segment_ids) if s.state != "archived"]  # D22
+        latest = (
+            "" if not visible else visible[-1].title if visible[-1].state == "active" else visible[-1].trace
+        )
         return {
             "id": t.id,
             "title": t.title,
@@ -685,12 +750,13 @@ class MemoryStore:
         ]
 
     def thread_text(self, tid: int) -> str:
-        """事件线的文字：标题、摘要和所有片段标题，用于关键词检索。"""
+        """事件线的文字：标题、摘要和片段标题（抽象化的用关键词，移进档案的不算），用于关键词检索。"""
         t = self.get_thread(tid)
         titles = [
             r[0]
             for r in self.db.execute(
-                "SELECT s.title FROM segments s JOIN thread_segments ts ON ts.segment_id = s.id WHERE ts.thread_id = ?",
+                "SELECT CASE s.state WHEN 'abstract' THEN s.trace ELSE s.title END FROM segments s "
+                "JOIN thread_segments ts ON ts.segment_id = s.id WHERE ts.thread_id = ? AND s.state != 'archived'",
                 (tid,),
             )
         ]

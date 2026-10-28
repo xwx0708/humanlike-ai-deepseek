@@ -10,7 +10,7 @@
 import random
 from dataclasses import dataclass
 
-from contracts.memory import ProfileFact, days
+from contracts.memory import ProfileFact
 
 EVOKE, OVERWRITE, NOTHING = "唤起", "覆盖", "都不"
 
@@ -26,10 +26,10 @@ class ConflictKnobs:
 DEFAULT_KNOBS = ConflictKnobs()
 
 
-def firmness(fact: ProfileFact, now_ts: float, k: ConflictKnobs = DEFAULT_KNOBS) -> float:
-    """0～1。被提到的次数越多、最近一次越近，越牢固。"""
+def firmness(fact: ProfileFact, idle_days: float, k: ConflictKnobs = DEFAULT_KNOBS) -> float:
+    """0～1。被提到的次数越多、最近一次越近，越牢固。idle_days：最近一次被提到后经过的记忆时间（D21）。"""
     by_mentions = 1 - 0.5**fact.mentions  # 1 次 0.5，2 次 0.75，3 次 0.875
-    by_recency = 0.5 ** (max(0.0, days(now_ts - fact.last_ts)) / k.firm_half_life)
+    by_recency = 0.5 ** (max(0.0, idle_days) / k.firm_half_life)
     return by_mentions * by_recency
 
 
@@ -51,9 +51,9 @@ class ConflictResult:
 
 
 def resolve_conflict(
-    old: ProfileFact, now_ts: float, rng: random.Random, k: ConflictKnobs = DEFAULT_KNOBS
+    old: ProfileFact, idle_days: float, rng: random.Random, k: ConflictKnobs = DEFAULT_KNOBS
 ) -> ConflictResult:
-    firm = firmness(old, now_ts, k)
+    firm = firmness(old, idle_days, k)
     probs = outcome_probabilities(firm, k)
     roll = rng.random()
     if roll < probs[EVOKE]:

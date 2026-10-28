@@ -20,7 +20,7 @@ def fact(mentions=1, last_ts=0.0):
 def test_firmness_grows_with_mentions_and_fades_with_time():
     assert firmness(fact(1), 0) == pytest.approx(0.5)
     assert firmness(fact(3), 0) == pytest.approx(0.875)
-    assert firmness(fact(1), 180 * DAY) == pytest.approx(0.25)  # 180 天没提，减半
+    assert firmness(fact(1), 180) == pytest.approx(0.25)  # 180 天没提，减半
 
 
 @pytest.mark.parametrize(("firm", "evoke", "overwrite"), [(0.5, 0.5, 0.4), (1.0, 0.8, 0.0), (0.0, 0.2, 0.8)])
@@ -33,7 +33,7 @@ def test_probabilities(firm, evoke, overwrite):
 def test_firm_facts_are_evoked_more_and_overwritten_less():
     rng = random.Random(42)
     firm = [resolve_conflict(fact(5), 0, rng).outcome for _ in range(10000)]
-    weak = [resolve_conflict(fact(1), 365 * DAY, rng).outcome for _ in range(10000)]
+    weak = [resolve_conflict(fact(1), 365, rng).outcome for _ in range(10000)]
     assert firm.count(EVOKE) > weak.count(EVOKE) and firm.count(OVERWRITE) < weak.count(OVERWRITE)
     # 频率接近概率：牢固度 0.97 时唤起约 78%
     assert abs(firm.count(EVOKE) / 10000 - outcome_probabilities(firmness(fact(5), 0))[EVOKE]) < 0.02
