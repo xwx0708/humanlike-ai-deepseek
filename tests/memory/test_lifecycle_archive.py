@@ -5,10 +5,11 @@ import pytest
 from contracts.memory import ChatTurn, EmotionScore, Segment
 from llm import FakeModel
 from memory.archive import ERASE, TO_ARCHIVE, forget_thread, restore_segment, search_archive
-from memory.lifecycle import FAMILIAR, RUNNING, context_used, maybe_start, phase, should_start
+from memory.lifecycle import context_used, register
 from memory.store import MemoryStore
 from memory.subconscious import split_turns
 from memory.tokens import estimate_tokens
+from runtime.lifecycle import FAMILIAR, RUNNING, Lifecycle
 
 DAY = 86400.0
 
@@ -72,24 +73,28 @@ def test_familiar_phase_starts_at_70_percent_of_context(store):
     c = store.new_conversation(0)
     for i in range(3):
         store.add_turn(c.id, "user", "字" * 96, i * 60)  # 每条 100
-    assert phase(store) == FAMILIAR and context_used(store) == 300
-    assert not should_start(store, 500)  # 300 < 350
-    assert should_start(store, 400)  # 300 ≥ 280
+    life = Lifecycle(path=None)
+    assert life.phase == FAMILIAR and context_used(store) == 300
+    assert not life.should_start(context_used(store), 500)  # 300 < 350
+    assert life.should_start(context_used(store), 400)  # 300 ≥ 280
 
 
-def test_start_up_consolidates_everything_and_fills_strength(store):
+def test_start_up_consolidates_everything_and_fills_strength(store, tmp_path):
     c1 = store.new_conversation(0)
     store.add_turn(c1.id, "user", "字" * 96, 0)
     c2 = store.new_conversation(10 * DAY)
     store.add_turn(c2.id, "user", "字" * 96, 10 * DAY)
-    assert maybe_start(store, FakeModel([]), 10 * DAY, context_limit=10_000) is None  # 还没到 70%
     fake = FakeModel([seg_reply(1, "第一场"), NEW, {"summary": "聊了第一场"}, seg_reply(1, "第二场"), NEW])
-    rep = maybe_start(store, fake, 10 * DAY + 60, context_limit=250)
-    assert rep is not None and len(rep.reports) == 2 and phase(store) == RUNNING
+    life = Lifecycle(path=tmp_path / "lifecycle.json")
+    register(life, store, fake)
+    assert life.maybe_start(10 * DAY, context_used(store), 10_000) is None  # 还没到 70%
+    out = life.maybe_start(10 * DAY + 60, context_used(store), 250)
+    assert len(out["记忆"].reports) == 2 and life.phase == RUNNING
     segs = store.segments()
     assert [s.title for s in segs] == ["第一场", "第二场"]
     assert all(s.last_recall_ts == 10 * DAY + 60 for s in segs)  # 初始强度满格
-    assert maybe_start(store, FakeModel([]), 20 * DAY, context_limit=250) is None  # 只启动一次
+    assert Lifecycle(path=tmp_path / "lifecycle.json").phase == RUNNING  # 存了下来，重启后还是运行期
+    assert life.maybe_start(20 * DAY, context_used(store), 250) is None  # 只启动一次
 
 
 # ---------- 忘掉：用户选择存进档案或彻底删除 ----------

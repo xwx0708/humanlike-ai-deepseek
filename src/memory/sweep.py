@@ -11,6 +11,7 @@ import math
 import random
 from dataclasses import dataclass
 
+from contracts.emotion import EmotionBaseline, ZeroBaseline
 from contracts.llm import ChatModel
 from contracts.memory import SECONDS_PER_DAY, Segment
 from memory.clock import MemoryClock, clock_of
@@ -62,6 +63,7 @@ def sweep(
     clock: MemoryClock | None = None,
     k: SweepKnobs = DEFAULT_KNOBS,
     rng: random.Random | None = None,
+    baseline: EmotionBaseline | None = None,
 ) -> SweepReport | None:
     """攒够了就按批处理，返回处理结果；一批都不够返回 None。rng：随机挑留下的 5%，测试时传固定种子。"""
     clock, rng = clock or clock_of(store), rng or random.Random()
@@ -71,7 +73,8 @@ def sweep(
         return None
     report = SweepReport([], {})
     for i in range(len(due) // k.batch_size):
-        _sweep_batch(store, model, now_ts, due[i * k.batch_size : (i + 1) * k.batch_size], k, rng, report)
+        batch = due[i * k.batch_size : (i + 1) * k.batch_size]
+        _sweep_batch(store, model, now_ts, batch, k, rng, report, baseline or ZeroBaseline())
     return report
 
 
@@ -83,6 +86,7 @@ def _sweep_batch(
     k: SweepKnobs,
     rng: random.Random,
     report: SweepReport,
+    baseline: EmotionBaseline,
 ) -> None:
     """一批：95% 移进档案，5% 只留关键词、重新开始遗忘曲线。"""
     n_keep = max(1, round(len(batch) * k.keep_ratio))
@@ -105,7 +109,9 @@ def _sweep_batch(
         e = s.emotion
         # 新的遗忘曲线：从现在开始，半衰期按情绪和重要性重新算（不再带首尾加成和以前的调整）
         s.half_life = (
-            initial_half_life(relative_arousal(e.arousal, 0.0), e.importance, knobs)
+            initial_half_life(
+                relative_arousal(e.arousal, baseline.arousal_baseline(now_ts)), e.importance, knobs
+            )
             if e
             else knobs.base_half_life
         )

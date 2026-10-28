@@ -1,12 +1,9 @@
-"""后台调度：什么时候启动、什么时候整理、什么时候夜间合并。由后台时钟定期调用 tick()。
+"""记忆模块的后台任务：由全局调度（runtime.scheduler）每分钟调用一次 tick()（D27：时钟谁都要）。
 
-- 熟悉期：上下文用到约 70% 时启动（D24）。
+- 熟悉期：只检查全局生命周期是否该启动（上下文用到约 70%，D24、D26）；启动时各模块的启动步骤由生命周期依次执行。
 - 运行期：对话停顿后整理（设想文档：整理在对话结束后或空闲时运行，避免边读边改）。
   停顿多久算"停顿"，暂定与记忆时钟的减速点相同（25 分钟，D21）。
 - 夜间：凌晨首次 tick 时合并近期重复的事件线（事件切分.md 第三层第 5 条）。
-
-暂行：后台时钟归哪个模块还没定（架构总图边界问题），先提供 tick() 和一个简单的循环入口
-`python -m memory.runner`（每分钟 tick 一次）。
 """
 
 import argparse
@@ -18,10 +15,11 @@ from dataclasses import dataclass, field
 from contracts.llm import ChatModel
 from memory.boundaries import conversation_closed
 from memory.clock import DEFAULT_CLOCK
-from memory.lifecycle import RUNNING, StartReport, maybe_start, phase
+from memory.lifecycle import context_used, register
 from memory.merge import MergeReport, merge_recent_threads
 from memory.store import MemoryStore
 from memory.subconscious import ConsolidationReport, consolidate
+from runtime.lifecycle import RUNNING, Lifecycle
 
 
 @dataclass(frozen=True)
@@ -35,7 +33,7 @@ DEFAULT_KNOBS = RunnerKnobs()
 
 @dataclass
 class TickReport:
-    started: StartReport | None = None
+    started: dict[str, object] | None = None  # 全局启动时各模块的结果
     consolidated: dict[int, ConsolidationReport] = field(default_factory=dict)
     merged: MergeReport | None = None
 
@@ -44,13 +42,14 @@ def tick(
     store: MemoryStore,
     model: ChatModel,
     now_ts: float,
+    lifecycle: Lifecycle,
     context_limit: int,
     k: RunnerKnobs = DEFAULT_KNOBS,
     rng: random.Random | None = None,
 ) -> TickReport:
     report = TickReport()
-    if phase(store) != RUNNING:
-        report.started = maybe_start(store, model, now_ts, context_limit, rng=rng)
+    if lifecycle.phase != RUNNING:
+        report.started = lifecycle.maybe_start(now_ts, context_used(store), context_limit)
         return report
     for cid in store.conversation_ids():
         turns = store.unsegmented_turns(cid)
@@ -66,25 +65,33 @@ def tick(
 
 
 def main(argv: list[str] | None = None) -> None:
+    """暂行的独立入口：只跑记忆模块的后台任务。以后各模块的任务都登记到同一个全局调度里一起跑。"""
     from llm import subconscious_model
     from llm.settings import load_settings
+    from runtime.scheduler import Scheduler
 
-    ap = argparse.ArgumentParser(description="记忆模块的后台调度：每分钟 tick 一次")
+    ap = argparse.ArgumentParser(description="记忆模块的后台任务：每分钟 tick 一次")
     ap.add_argument("--once", action="store_true", help="只 tick 一次")
     args = ap.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    store, model = MemoryStore(), subconscious_model()
+    store, model, lifecycle = MemoryStore(), subconscious_model(), Lifecycle()
+    register(lifecycle, store, model)
     limit = load_settings().thinking_context_limit
-    while True:
-        r = tick(store, model, time.time(), limit)
+
+    def job(now_ts: float) -> None:
+        r = tick(store, model, now_ts, lifecycle, limit)
         if r.started or r.consolidated or r.merged:
             print(
                 time.strftime("%H:%M"), "启动" if r.started else "", f"整理 {list(r.consolidated)}", r.merged
             )
-        if args.once:
-            break
-        time.sleep(60)
+
+    scheduler = Scheduler()
+    scheduler.add("记忆", 60, job)
+    if args.once:
+        scheduler.run_pending()
+    else:
+        scheduler.run_forever()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import random
 import time
 from dataclasses import dataclass, field, replace
 
+from contracts.emotion import EmotionBaseline, EmotionScorer, ZeroBaseline
 from contracts.llm import ChatModel
 from contracts.memory import ChatTurn, Segment, days
 from memory.boundaries import conversation_closed
@@ -62,9 +63,14 @@ def consolidate(
     now_ts: float,
     rng: random.Random | None = None,
     sweep_forgotten: bool = True,
+    scorer: EmotionScorer | None = None,
+    baseline: EmotionBaseline | None = None,
 ) -> ConsolidationReport:
     """rng：画像矛盾时掷骰子、批量遗忘时随机挑留下的 5% 用；测试时传入固定种子的 random.Random 以便复现。
-    sweep_forgotten：最后是否批量遗忘；启动时补整理熟悉期的对话，不该在中途遗忘（D24）。"""
+    sweep_forgotten：最后是否批量遗忘；启动时补整理熟悉期的对话，不该在中途遗忘（D24）。
+    scorer / baseline：情绪模块提供的打分和基线（记忆和情绪衔接的地方，D27）。没有时用暂行做法：
+    切段提示词一起打的分、基线 0。"""
+    baseline = baseline or ZeroBaseline()
     rng = rng or random.Random()
     report = ConsolidationReport()
     turns = store.unsegmented_turns(conversation_id)
@@ -88,8 +94,11 @@ def consolidate(
         ts_of = {t.id: t.ts for t in batch}
         for i, d in enumerate(drafts):
             person_ids = [store.upsert_person(name, aliases) for name, aliases in d.people]
-            # 暂行：情绪基线还没实现，先按基线 0 计算相对唤醒度
-            rel = relative_arousal(d.emotion.arousal, baseline=0.0)
+            if scorer is not None:  # 情绪模块接手打分后，以它的分数为准
+                text = "\n".join(t.content for t in batch if t.id in d.turn_ids)
+                d.emotion = scorer.score(text, d.title)
+            end_ts = max(ts_of[t] for t in d.turn_ids)
+            rel = relative_arousal(d.emotion.arousal, baseline.arousal_baseline(end_ts))
             # 整场对话的首个片段；末个片段要等对话结束时才知道，见 _mark_last_segment
             at_edge = prev is None and i == 0
             seg = store.add_segment(
@@ -187,7 +196,7 @@ def consolidate(
     _summarize_if_closed(store, model, conversation_id, now_ts)
     report.residents = refresh_residents(store, now_ts)  # 新片段、新事实可能改变常驻栏（D17）
     if sweep_forgotten:
-        report.sweep = sweep(store, model, now_ts, rng=rng)
+        report.sweep = sweep(store, model, now_ts, rng=rng, baseline=baseline)
         if report.sweep:  # 有片段被遗忘：它们所在的对话，摘要重新概括、更抽象一层
             gone = set(report.sweep.archived) | {int(i) for i in report.sweep.kept}
             for cid in sorted({store.get_segment(i).conversation_id for i in gone}):

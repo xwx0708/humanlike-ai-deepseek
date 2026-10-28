@@ -6,10 +6,10 @@ import pytest
 
 from contracts.memory import EmotionScore, Segment
 from llm import FakeModel
-from memory.lifecycle import RUNNING
 from memory.runner import tick
 from memory.store import MemoryStore
 from memory.subconscious import summarize_conversation
+from runtime.lifecycle import RUNNING, Lifecycle
 
 MIN = 60.0
 
@@ -52,25 +52,25 @@ def _noon(day=0):
 def test_familiar_phase_only_checks_whether_to_start(store):
     c = store.new_conversation(_noon())
     store.add_turn(c.id, "user", "今天加班", _noon())
-    r = tick(store, FakeModel([]), _noon() + 60 * MIN, context_limit=100_000)
+    r = tick(store, FakeModel([]), _noon() + 60 * MIN, Lifecycle(path=None), context_limit=100_000)
     assert r.started is None and r.consolidated == {}
 
 
 def test_running_phase_consolidates_after_pause_and_merges_at_night(store):
-    store.set_meta("phase", RUNNING)
+    life = Lifecycle(path=None, phase=RUNNING)
     store.set_meta("last_merge_day", time.strftime("%Y-%m-%d", time.localtime(_noon())))
     c = store.new_conversation(_noon())
     store.add_turn(c.id, "user", "今天加班", _noon())
-    assert tick(store, FakeModel([]), _noon() + 10 * MIN, 100_000).consolidated == {}  # 还在聊，不整理
+    assert tick(store, FakeModel([]), _noon() + 10 * MIN, life, 100_000).consolidated == {}  # 还在聊，不整理
     fake = FakeModel([SEG, NEW])
-    r = tick(store, fake, _noon() + 30 * MIN, 100_000)
+    r = tick(store, fake, _noon() + 30 * MIN, life, 100_000)
     assert list(r.consolidated) == [c.id] and r.merged is None  # 白天不合并
     assert store.get_conversation(c.id).summary == ""  # 停顿了，但对话还没结束（30 分钟）
-    r = tick(store, FakeModel([{"summary": "那天他说在加班"}]), _noon() + 40 * MIN, 100_000)
+    r = tick(store, FakeModel([{"summary": "那天他说在加班"}]), _noon() + 40 * MIN, life, 100_000)
     assert store.get_conversation(c.id).summary == "那天他说在加班"
-    r = tick(store, FakeModel([]), _noon(1), 100_000)  # 第二天中午（已过凌晨 3 点）：夜间合并一次
+    r = tick(store, FakeModel([]), _noon(1), life, 100_000)  # 第二天中午（已过凌晨 3 点）：夜间合并一次
     assert r.merged is not None
-    assert tick(store, FakeModel([]), _noon(1) + 60, 100_000).merged is None  # 同一天只合并一次
+    assert tick(store, FakeModel([]), _noon(1) + 60, life, 100_000).merged is None  # 同一天只合并一次
 
 
 def test_conversation_summary_gets_vaguer_as_segments_are_forgotten(store):
