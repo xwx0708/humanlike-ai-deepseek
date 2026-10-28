@@ -95,8 +95,10 @@ def consolidate(
             temperature=0.2,
         )
         drafts = parse_segments(reply.data, batch)
+        marks = store.remember_marks()  # 回应模块用关键词认出的"记住"（D29），和切段模型的判断取并集
         ts_of = {t.id: t.ts for t in batch}
         for i, d in enumerate(drafts):
+            d.remember_requested = d.remember_requested or bool(marks & set(d.turn_ids))
             person_ids = [store.upsert_person(name, aliases) for name, aliases in d.people]
             if scorer is not None:  # 情绪模块接手打分后，以它的分数为准
                 text = "\n".join(t.content for t in batch if t.id in d.turn_ids)

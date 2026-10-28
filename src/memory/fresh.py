@@ -79,7 +79,12 @@ def split_point(
 def drop_fresh(store: MemoryStore, surfaced: list, fresh: list[FreshMemory]) -> list:
     """去掉浮现区里和新鲜记忆重复的：片段的消息全都还在新鲜记忆里，就不必再浮现一次。"""
     ids = {m.turn.id for m in fresh}
-    return [s for s in surfaced if not set(store.get_segment(s.segment_id).message_ids) <= ids]
+    out = []
+    for s in surfaced:
+        own = set(store.get_segment(s.segment_id).message_ids)
+        if not (own and own <= ids):
+            out.append(s)
+    return out
 
 
 def fresh_block(items: list[FreshMemory]) -> str:

@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS erase_log (
     id INTEGER PRIMARY KEY, ts REAL NOT NULL, segments INTEGER NOT NULL, turns INTEGER NOT NULL, reason TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- 回应模块用关键词认出"记住"的消息（D29）；整理时含这些消息的片段算用户要求记住
+CREATE TABLE IF NOT EXISTS remember_marks (turn_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS people (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS aliases (
     alias TEXT PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES people(id)
@@ -156,6 +158,11 @@ class MemoryStore:
     def conversation_ids(self) -> list[int]:
         return [r[0] for r in self.db.execute("SELECT id FROM conversations ORDER BY start_ts, id")]
 
+    def all_turns(self) -> list[ChatTurn]:
+        """全部消息按先后；熟悉期回应模块把它们都放进上下文。"""
+        rows = self.db.execute("SELECT * FROM turns ORDER BY ts, id")
+        return [ChatTurn(r["id"], r["conversation_id"], r["role"], r["content"], r["ts"]) for r in rows]
+
     def all_turn_texts(self) -> list[str]:
         return [r[0] for r in self.db.execute("SELECT content FROM turns ORDER BY id")]
 
@@ -166,6 +173,13 @@ class MemoryStore:
     def set_meta(self, key: str, value: str) -> None:
         with self.db:
             self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+
+    def mark_remember(self, turn_id: int) -> None:
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO remember_marks VALUES (?)", (turn_id,))
+
+    def remember_marks(self) -> set[int]:
+        return {r[0] for r in self.db.execute("SELECT turn_id FROM remember_marks")}
 
     def last_conversation(self) -> Conversation | None:
         r = self.db.execute("SELECT id FROM conversations ORDER BY end_ts DESC LIMIT 1").fetchone()
