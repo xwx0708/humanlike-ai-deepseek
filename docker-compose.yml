@@ -1,0 +1,45 @@
+# 类人 AI 一键部署（D32）：NapCat + AstrBot（都用官方镜像，运行时下载，不随仓库分发）+ 本项目插件。
+# 用法见 03-回应/部署.md：复制 .env.example 为 .env，填好 OWNER_QQ 等，然后 docker compose up -d。
+# 结构参照 NapCat 官方模板 NapNeko/NapCat-Docker 的 compose/astrbot.yml。
+services:
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    restart: unless-stopped
+    environment:
+      - NAPCAT_UID=${NAPCAT_UID:-1000}
+      - NAPCAT_GID=${NAPCAT_GID:-1000}
+      - MODE=astrbot # 自动配置反向 WebSocket，连到下面的 astrbot 服务
+    ports:
+      - "127.0.0.1:6099:6099" # NapCat 网页：扫码登录 QQ 小号
+    volumes:
+      - ./data/astrbot:/AstrBot/data
+      - ./data/napcat/config:/app/napcat/config
+      - ./data/napcat/qq:/app/.config/QQ
+    networks:
+      - humanlike
+
+  astrbot:
+    build:
+      context: .
+      dockerfile: deploy/astrbot.Dockerfile # 官方镜像 + 本项目的依赖
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - HUMANLIKE_ROOT=/humanlike
+      - HUMANLIKE_OWNER_QQ=${OWNER_QQ:-} # 只陪的那个人（D29）
+      # 潜意识模型跑在宿主机的 Ollama 上（要用显卡）
+      - OLLAMA_BASE_URL=${DOCKER_OLLAMA_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:6185:6185" # AstrBot 网页：配置思考模型
+    volumes:
+      - ./data/astrbot:/AstrBot/data
+      - ./:/humanlike # 本项目：代码、.env、记忆数据（data/）
+      - ./src/response/astrbot_plugin:/AstrBot/data/plugins/astrbot_plugin_humanlike
+    networks:
+      - humanlike
+
+networks:
+  humanlike:
+    driver: bridge
