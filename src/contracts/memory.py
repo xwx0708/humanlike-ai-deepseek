@@ -62,8 +62,10 @@ class Segment:
     recall_count: int = 0
     adjustment: float = 1.0  # 潜意识对本条记忆的累积调整倍数
     at_edge: bool = False  # 是否为一场对话的首个或末个片段
-    state: str = "active"  # active：在概率海里；forgotten：已遗忘，只剩残影
-    trace: str = ""  # 残影：遗忘后留下的极简概括
+    # active：在记忆里；archived：批量遗忘时移进档案，不再出现在记忆系统里；
+    # abstract：批量遗忘时被留下，只剩关键词，重新开始一条遗忘曲线（决策 D22）
+    state: str = "active"
+    trace: str = ""  # state 为 abstract 时的关键词，用"、"隔开
     remember_requested: bool = False  # 用户明确要求记住（所在事件线免竞争常驻，D17）
 
 
