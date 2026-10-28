@@ -44,21 +44,33 @@
     --group: rgba(255,255,255,.025);
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--page); color: var(--ink);
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--page); color: var(--ink); display: flex; flex-direction: column; overflow: hidden;
          font: 13px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
-  main { max-width: 1880px; margin: 0 auto; padding: 12px 16px 28px; }
-  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; margin-bottom: 8px; }
-  h1 { font-size: 20px; margin: 0; }
+  /* 顶栏：导航、标题、图例、缩放按钮；下面整块是可以放大缩小、拖动的画布 */
+  .topbar { flex: none; padding: 10px 16px 6px; border-bottom: 1px solid var(--border); background: var(--page); position: relative; z-index: 3; }
+  .topbar nav.sitenav { margin-bottom: 6px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; margin-bottom: 4px; }
+  h1 { font-size: 18px; margin: 0; }
+  .zoombar { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+  .zoombar button { font: inherit; font-size: 12.5px; min-width: 30px; height: 28px; padding: 0 9px; border-radius: 7px; cursor: pointer;
+                    color: var(--ink); background: var(--surface); border: 1px solid var(--border); }
+  .zoombar button:hover { border-color: var(--ink-2); }
+  .zoombar .pct { min-width: 58px; font-variant-numeric: tabular-nums; }
+  .zoombar .hint { color: var(--muted); font-size: 12px; margin-right: 6px; }
+  #viewport { flex: 1; position: relative; overflow: hidden; cursor: grab; touch-action: none; user-select: none;
+              background-color: var(--page);
+              background-image: radial-gradient(circle, var(--grid) 1px, transparent 1.2px); background-size: 22px 22px; }
+  #viewport.dragging { cursor: grabbing; }
+  #world { position: absolute; left: 0; top: 0; width: 1800px; transform-origin: 0 0; }
   .sub { color: var(--ink-2); }
-  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; font-size: 12px; color: var(--ink-2);
-            margin: 0 0 10px; }
+  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 12px; color: var(--ink-2); margin: 0; }
   .legend .grp { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; }
   .legend .grp > b { color: var(--muted); font-weight: 500; }
   .zone-sw { display: inline-block; width: 14px; height: 12px; border-radius: 3px; border: 1px solid var(--border); vertical-align: -2px; margin-right: 4px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
 
-  .canvas-wrap { overflow-x: auto; }
-  svg#map { display: block; width: 100%; min-width: 1400px; height: auto; }
+  svg#map { display: block; width: 1800px; height: 1110px; }
   svg#map text { font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
   .zone-label { font-size: 13px; font-weight: 600; fill: var(--ink-2); }
   .col-label { font-size: 12px; fill: var(--muted); }
@@ -116,8 +128,7 @@
   .tip .ref { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
 
   /* 图下方的三栏 */
-  .below { display: grid; grid-template-columns: 1.05fr 1.25fr .9fr; gap: 14px; margin-top: 14px; }
-  @media (max-width: 1300px) { .below { grid-template-columns: 1fr; } }
+  .below { display: grid; grid-template-columns: 620px 740px 412px; gap: 14px; margin-top: 18px; align-items: start; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px 12px; }
   .card h2 { font-size: 14px; margin: 0 0 8px; }
   .card h2 small { color: var(--muted); font-weight: 400; margin-left: 6px; }
@@ -141,11 +152,18 @@
 </style>
 </head>
 <body>
-<main>
+<div class="topbar">
   <nav class="sitenav"></nav><script src="nav.js"></script>
   <header>
     <h1>总流程表 · 整个体系的架构</h1>
-    <span class="sub">一条消息从进来，到被记住、被遗忘、被找回；每个方块标出实现状态。把鼠标放到方块上看细节和出处。</span>
+    <span class="sub">一条消息从进来，到被记住、被遗忘、被找回；每个方块标出实现状态。鼠标放到方块上看细节和出处。</span>
+    <div class="zoombar">
+      <span class="hint">滚轮缩放 · 拖动平移 · 双击放大</span>
+      <button id="zoomOut" title="缩小（-）">−</button>
+      <button id="zoomPct" class="pct" title="恢复 100%（1）">100%</button>
+      <button id="zoomIn" title="放大（+）">+</button>
+      <button id="zoomFit" title="看全部（0）">适应</button>
+    </div>
   </header>
   <div class="legend" id="legend">
     <div class="grp"><b>状态</b>
@@ -164,10 +182,10 @@
     <div class="grp"><b>箭头</b><span>实线：已接通　虚线：还没接通</span><span>①～⑩：一条消息的一生（见下方）</span></div>
   </div>
 
-  <div class="canvas-wrap">
-    <svg id="map" viewBox="0 0 1800 1110" role="img" aria-label="整个体系的架构总图"></svg>
-  </div>
-
+</div>
+<div id="viewport">
+ <div id="world">
+  <svg id="map" viewBox="0 0 1800 1110" role="img" aria-label="整个体系的架构总图"></svg>
   <div class="below">
     <section class="card">
       <h2>一条消息的一生<small>图中的 ①～⑩</small></h2>
@@ -186,7 +204,8 @@
     状态依据：00-总纲/待办.md（2026-10-28 第六次更新）、偏离记录.md、决策日志 D1～D27、待你确认.md。本页数据写在页面脚本的 BOXES / LIFE / IFACES / OPEN 里；
     文档更新后需要同步修改这里（记忆对话正在实现的新功能，在文档记录之前不会出现在本页）。实时的文档内容见「全部工作」页。
   </footer>
-</main>
+ </div>
+</div>
 <div class="tip" id="tip"></div>
 
 <script>
@@ -520,6 +539,99 @@ document.getElementById('life').innerHTML = LIFE.map(([n, t, d, s]) =>
 document.querySelector('#ifaces tbody').innerHTML = IFACES.map(([n, dir, what, s, note]) =>
   `<tr><td>${n}</td><td class="dir">${dir}</td><td class="cn">${what}</td><td>${tagHtml([s, note || ST[s]])}</td></tr>`).join('');
 document.getElementById('open').innerHTML = OPEN.map(([q, src]) => `<li>${q}<div class="src">${src}</div></li>`).join('');
+
+// ────────────────────────────── 画布：缩放与平移 ──────────────────────────────
+(() => {
+  const vp = document.getElementById('viewport'), world = document.getElementById('world');
+  const pctBtn = document.getElementById('zoomPct');
+  const MIN = 0.1, MAX = 5, KEY = 'overview-view';
+  let s = 1, x = 0, y = 0;
+
+  function apply() {
+    world.style.transform = `translate(${x}px, ${y}px) scale(${s})`;
+    vp.style.backgroundPosition = `${x}px ${y}px`;
+    vp.style.backgroundSize = `${22 * s}px ${22 * s}px`;
+    pctBtn.textContent = Math.round(s * 100) + '%';
+    try { sessionStorage.setItem(KEY, JSON.stringify({ s, x, y })); } catch (_) {}
+  }
+  function zoomAt(factor, cx, cy) {   // cx, cy：视口里的坐标，缩放时这一点保持不动
+    const ns = Math.min(MAX, Math.max(MIN, s * factor));
+    x = cx - (cx - x) * (ns / s); y = cy - (cy - y) * (ns / s); s = ns; apply();
+  }
+  function center() { const r = vp.getBoundingClientRect(); return [r.width / 2, r.height / 2]; }
+  function fit() {
+    const r = vp.getBoundingClientRect(), w = world.offsetWidth, h = world.offsetHeight, pad = 24;
+    s = Math.min(MAX, Math.max(MIN, Math.min((r.width - pad * 2) / w, (r.height - pad * 2) / h)));
+    x = (r.width - w * s) / 2; y = pad; apply();
+  }
+  function actual() { const [cx] = center(); s = 1; x = cx - world.offsetWidth / 2; y = 16; apply(); }
+
+  // 滚轮缩放；触控板双指捏合时浏览器会带 ctrlKey，同样处理
+  vp.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = vp.getBoundingClientRect();
+    const k = e.deltaMode === 1 ? 0.05 : 0.0015;
+    zoomAt(Math.exp(-e.deltaY * k * (e.ctrlKey ? 4 : 1)), e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+
+  // 拖动平移；触屏两根手指捏合缩放
+  const pts = new Map();
+  let last = null, pinch = null;
+  vp.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    vp.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, [e.clientX, e.clientY]);
+    vp.classList.add('dragging');
+    document.getElementById('tip').style.display = 'none';
+    if (pts.size === 2) { const [a, b] = [...pts.values()]; pinch = Math.hypot(a[0] - b[0], a[1] - b[1]); }
+    last = [e.clientX, e.clientY];
+  });
+  vp.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pts.size === 2 && pinch) {
+      const [a, b] = [...pts.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      const r = vp.getBoundingClientRect();
+      zoomAt(d / pinch, (a[0] + b[0]) / 2 - r.left, (a[1] + b[1]) / 2 - r.top);
+      pinch = d;
+      return;
+    }
+    x += e.clientX - last[0]; y += e.clientY - last[1]; last = [e.clientX, e.clientY]; apply();
+  });
+  const up = e => {
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinch = null;
+    if (pts.size === 0) vp.classList.remove('dragging');
+    else last = [...pts.values()][0];
+  };
+  vp.addEventListener('pointerup', up);
+  vp.addEventListener('pointercancel', up);
+  vp.addEventListener('dblclick', e => { const r = vp.getBoundingClientRect(); zoomAt(1.6, e.clientX - r.left, e.clientY - r.top); });
+
+  document.getElementById('zoomIn').onclick = () => zoomAt(1.25, ...center());
+  document.getElementById('zoomOut').onclick = () => zoomAt(0.8, ...center());
+  document.getElementById('zoomFit').onclick = fit;
+  pctBtn.onclick = actual;
+  addEventListener('keydown', e => {
+    if (e.target.closest && e.target.closest('input, textarea, select')) return;
+    const step = 80;
+    if (e.key === '+' || e.key === '=') zoomAt(1.25, ...center());
+    else if (e.key === '-' || e.key === '_') zoomAt(0.8, ...center());
+    else if (e.key === '0') fit();
+    else if (e.key === '1') actual();
+    else if (e.key === 'ArrowLeft') { x += step; apply(); }
+    else if (e.key === 'ArrowRight') { x -= step; apply(); }
+    else if (e.key === 'ArrowUp') { y += step; apply(); }
+    else if (e.key === 'ArrowDown') { y -= step; apply(); }
+    else return;
+    e.preventDefault();
+  });
+
+  // 页面自动刷新后保持原来的视角；第一次打开时看全部
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem(KEY)); } catch (_) {}
+  if (saved && isFinite(saved.s)) { ({ s, x, y } = saved); apply(); } else fit();
+})();
 </script>
 </body>
 </html>
