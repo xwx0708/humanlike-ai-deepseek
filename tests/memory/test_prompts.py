@@ -230,6 +230,7 @@ def test_consolidate_end_to_end_with_fake_model(store):
                 "confidence": 0.9,
                 "reason": "同一个人的健康",
             },
+            {"summary": "他妈妈先是咳嗽，半年后住院", "new_title": ""},
             {
                 "thread_ids": [],
                 "new_thread": True,
@@ -254,7 +255,54 @@ def test_consolidate_end_to_end_with_fake_model(store):
     assert store.get_segment(seg0.id).half_life == pytest.approx(seg0.half_life * 2.5)  # 旧记忆被拉长
     assert [(s, t) for s, t, _ in store.tuning_log()] == [("memory", str(seg0.id))]
     assert store.segment_links(c.id) == [(hospital.id, hike.id, "next")]
-    assert len(fake.calls) == 4  # 切段 1 次、归属 2 次、调参 1 次（爬山没有相关旧记忆，不调）
+    mom = store.get_thread(thread)
+    assert (mom.title, mom.summary) == ("妈妈的健康", "他妈妈先是咳嗽，半年后住院")  # 摘要更新，标题不变
+    assert hospital.at_edge and hike.at_edge  # 对话已结束（安静超过 30 分钟）：首、末片段都有加成
+    # 切段 1 次、归属 2 次、摘要 1 次（只有挂到已有线的才更新）、调参 1 次（爬山没有相关旧记忆，不调）
+    assert len(fake.calls) == 5
+
+
+def test_last_segment_marked_once_when_conversation_ends(store):
+    c = store.new_conversation(0)
+    for i in range(3):
+        store.add_turn(c.id, "user", f"第{i}句", i * 60)
+    seg_reply = {
+        "segments": [
+            {
+                "messages": [1],
+                "title": "A",
+                "people": [],
+                "arousal": 0,
+                "valence": 0,
+                "importance": 0,
+                "emotion_reason": "",
+            },
+            {
+                "messages": [2, 3],
+                "title": "B",
+                "people": [],
+                "arousal": 0,
+                "valence": 0,
+                "importance": 0,
+                "emotion_reason": "",
+            },
+        ]
+    }
+    new = {
+        "thread_ids": [],
+        "new_thread": True,
+        "new_thread_title": "T",
+        "related": [],
+        "confidence": 1,
+        "reason": "",
+    }
+    consolidate(store, FakeModel([seg_reply, new, new]), c.id, 200)  # 对话还没结束
+    a, b = store.segments(c.id)
+    assert a.at_edge and not b.at_edge
+    consolidate(store, FakeModel([]), c.id, 200 + 3600)  # 一小时后：已结束，补标末个片段
+    consolidate(store, FakeModel([]), c.id, 200 + 7200)  # 再调用也不会重复加成
+    b2 = store.get_segment(b.id)
+    assert b2.at_edge and b2.half_life == pytest.approx(b.half_life * 1.5)
 
 
 def test_apply_adjustments_caps_and_logs(store):

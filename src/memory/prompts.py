@@ -1,4 +1,4 @@
-"""潜意识模型（本地 Qwen）的三个提示词：切段第二层、判断事件线归属、修改函数参数。
+"""潜意识模型的四个提示词：切段第二层、判断事件线归属、修改函数参数、更新事件线摘要。
 
 每个任务由三部分组成：build_*（拼提示词）、*_SCHEMA（约束输出的 JSON 格式）、parse_*（校验结果）。
 模型的输出一律不直接信任：越界的数值收回范围内，不存在的 id 丢掉，漏掉的消息补回去。
@@ -35,7 +35,9 @@ def _hm(ts: float) -> str:
 SEGMENT_SYSTEM = """你是一个聊天 AI 的"潜意识"，在后台整理它和用户的聊天记录。现在要把一段对话切成"片段"。
 
 ## 什么是片段
-- 片段是对话中围绕同一件事的一个子话题，必须能用一句话概括。概括不了就说明切得太细，和相邻片段合并。
+- 片段是对话中围绕同一件事的一个子话题，必须能用一句话概括。
+- 太细和太粗都不行：一个片段撑不起一句话，就和相邻片段合并；标题需要用"并""同时""还""另外"把几件事串起来，
+  就说明切得太粗，要拆开（例如"妈妈住院"和"老板对请假不满"是两个片段，即使后者是前者引起的）。
 - 话题明显转了（例如从妈妈生病转到周末爬山），就是新片段；只是顺嘴插一句又马上绕回来，不算新片段。
 - 话题慢慢漂远（例如从工作累聊到想换工作再聊到想去哪个城市），漂到和开头不是一件事时，切开。
 - 允许话题交错：一条消息如果同时在说两件事，可以同时放进两个片段。
@@ -104,7 +106,7 @@ SEGMENT_SCHEMA: dict[str, Any] = {
 
 @dataclass
 class SegmentDraft:
-    """Qwen 切出、经校验的片段，还没有存进数据库。"""
+    """潜意识模型切出、经校验的片段，还没有存进数据库。"""
 
     turn_ids: list[int]
     title: str
@@ -148,7 +150,7 @@ def parse_segments(data: dict[str, Any], turns: list[ChatTurn]) -> list[SegmentD
         )
         drafts.append(SegmentDraft([turns[i - 1].id for i in idx], title, people, emotion))
     if not drafts:
-        raise ValueError("Qwen 没有切出任何有效片段")
+        raise ValueError("潜意识模型没有切出任何有效片段")
 
     # 漏掉的消息并到前面最近的片段（没有前面的就并到第一个）
     covered = {t for d in drafts for t in d.turn_ids}
@@ -291,7 +293,7 @@ class Adjustment:
 
 @dataclass
 class MemoryCard:
-    """给 Qwen 看的旧记忆卡片。"""
+    """给潜意识模型看的旧记忆卡片。"""
 
     id: int
     title: str
@@ -334,3 +336,43 @@ def parse_tuning(data: dict[str, Any], memory_ids: list[int]) -> list[Adjustment
         if (scope == "memory" and target in valid_memory) or (scope == "global" and target in TUNABLE):
             out.append(Adjustment(scope, target, factor, str(raw.get("reason", "")).strip()))
     return out
+
+
+# ====================================================================================
+# 四、更新事件线摘要
+# ====================================================================================
+
+SUMMARY_SYSTEM = """你是一个聊天 AI 的"潜意识"。一条事件线（跨越多天的同一件事）新增了片段，请更新它的摘要。
+
+## 规则
+- summary：一句话，按时间顺序概括这件事的来龙去脉和最新进展，不超过 60 个字。例如"他妈妈先是咳嗽，后来查出肺炎住院，现在已出院"。
+- 用第三人称"他"指用户。只写片段里有的事，不要推测。
+- new_title：标题一般不改，留空。只有原标题明显概括不了这件事时，才给出新的短标题（不超过 12 个字）。
+
+只输出 JSON。"""
+
+SUMMARY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}, "new_title": {"type": "string"}},
+    "required": ["summary", "new_title"],
+}
+
+
+def build_summary_prompt(title: str, summary: str, segments: list) -> list[Message]:
+    """segments：这条线上的片段（按时间排序），只用到 start_ts 和 title。"""
+    lines = "\n".join(
+        f"- {time.strftime('%Y-%m-%d', time.localtime(s.start_ts))}：{s.title}" for s in segments
+    )
+    return [
+        system(SUMMARY_SYSTEM),
+        user(f"事件线标题：{title}\n原摘要：{summary}\n\n各个片段（按时间）：\n{lines}"),
+    ]
+
+
+def parse_summary(data: dict[str, Any], old_title: str) -> tuple[str, str]:
+    """返回 (新摘要, 标题)。摘要为空时报错；新标题为空或过长时沿用原标题。"""
+    summary = str(data.get("summary", "")).strip()
+    if not summary:
+        raise ValueError("潜意识模型没有给出摘要")
+    title = str(data.get("new_title", "")).strip()
+    return summary[:120], (title if 0 < len(title) <= 20 else old_title)

@@ -353,7 +353,7 @@ class MemoryStore:
         ]
 
     def thread_card(self, tid: int) -> dict[str, Any]:
-        """给 Qwen 看的事件线卡片：只含标题、一句话摘要、最近片段标题、涉及人物。"""
+        """给潜意识模型看的事件线卡片：只含标题、一句话摘要、最近片段标题、涉及人物。"""
         t = self.get_thread(tid)
         latest = self.get_segment(t.segment_ids[-1]).title if t.segment_ids else ""
         return {
