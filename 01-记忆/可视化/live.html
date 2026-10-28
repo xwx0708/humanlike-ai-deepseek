@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>实时数据</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f7f7f4; --surface: #ffffff; --ink: #121212; --ink-2: #4a4945; --muted: #85837c;
+    --grid: #e6e5df; --border: rgba(11,11,11,.13);
+    --pos: #d98a00; --neg: #2a78d6; --flat: #8a8880; --line: #d0451b;
+    --done: #12925f; --done-bg: rgba(18,146,95,.10); --tmp: #c27c00; --tmp-bg: rgba(237,161,0,.14);
+    --ask: #7c4ddb; --ask-bg: rgba(124,77,219,.10); --todo: #8a8880; --todo-bg: rgba(138,136,128,.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0e0e0e; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8d86;
+      --grid: #2c2c2a; --border: rgba(255,255,255,.13);
+      --pos: #e5a920; --neg: #4a94ec; --flat: #8f8d86; --line: #ee7a45;
+      --done: #2fbf86; --done-bg: rgba(47,191,134,.14); --tmp: #e5a920; --tmp-bg: rgba(229,169,32,.15);
+      --ask: #a888f0; --ask-bg: rgba(168,136,240,.16); --todo: #8f8d86; --todo-bg: rgba(143,141,134,.12);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0e0e0e; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8d86;
+    --grid: #2c2c2a; --border: rgba(255,255,255,.13);
+    --pos: #e5a920; --neg: #4a94ec; --flat: #8f8d86; --line: #ee7a45;
+    --done: #2fbf86; --done-bg: rgba(47,191,134,.14); --tmp: #e5a920; --tmp-bg: rgba(229,169,32,.15);
+    --ask: #a888f0; --ask-bg: rgba(168,136,240,.16); --todo: #8f8d86; --todo-bg: rgba(143,141,134,.12);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 13px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
+  main { max-width: 1880px; margin: 0 auto; padding: 12px 16px 28px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 20px; margin-bottom: 10px; }
+  h1 { font-size: 20px; margin: 0; }
+  .sub { color: var(--ink-2); }
+  #status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+  .kpi .v { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .kpi .l { color: var(--ink-2); font-size: 12px; }
+  .grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 1300px) { .grid { grid-template-columns: 1fr; } }
+  .stack { display: grid; gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px 12px; min-width: 0; }
+  .card h2 { font-size: 15px; margin: 0 0 8px; }
+  .card h2 small { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .empty { background: var(--surface); border: 1px dashed var(--border); border-radius: 10px; padding: 28px; text-align: center; color: var(--ink-2); }
+  .empty b { display: block; font-size: 16px; color: var(--ink); margin-bottom: 6px; }
+  .seg { display: grid; grid-template-columns: minmax(120px, 260px) 1fr 54px; gap: 8px; align-items: center; padding: 3px 0; border-bottom: 1px solid var(--grid); }
+  .seg .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seg .title small { color: var(--muted); }
+  .track { position: relative; height: 12px; background: var(--grid); border-radius: 6px; }
+  .track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; }
+  .track .fline { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--line); }
+  .seg .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+  .seg.archived { opacity: .5; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+  .tag { display: inline-block; font-size: 11px; line-height: 17px; padding: 0 7px; border-radius: 999px; white-space: nowrap; margin-right: 3px;
+         color: var(--c); background: var(--bg); border: 1px solid color-mix(in srgb, var(--c) 35%, transparent); }
+  .tag.done { --c: var(--done); --bg: var(--done-bg); } .tag.tmp { --c: var(--tmp); --bg: var(--tmp-bg); }
+  .tag.ask { --c: var(--ask); --bg: var(--ask-bg); } .tag.todo { --c: var(--todo); --bg: var(--todo-bg); }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+  td.n { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .muted { color: var(--muted); }
+  .err { color: var(--tmp); background: var(--tmp-bg); padding: 10px 14px; border-radius: 10px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <nav class="sitenav"></nav><script src="nav.js"></script>
+  <header>
+    <h1>记忆库实时数据</h1>
+    <span class="sub">只读打开 data/memory.db（不会修改它），每 5 秒刷新一次。强度按记忆时钟算到此刻。</span>
+    <span id="status">读取中…</span>
+  </header>
+  <div id="err"></div>
+  <div id="app"></div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = ts => ts ? new Date(ts * 1000).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+const STATE = { active: ['done', '在记忆里'], archived: ['todo', '已进档案'], abstract: ['tmp', '只剩关键词'] };
+const valColor = v => v == null ? 'var(--flat)' : v > 0.2 ? 'var(--pos)' : v < -0.2 ? 'var(--neg)' : 'var(--flat)';
+
+function render(d) {
+  if (!d.exists || d.error) {
+    $('app').innerHTML = `<div class="empty"><b>${d.error ? '读取出错' : '还没有记忆数据'}</b>${esc(d.error || d.note)}<div class="muted" style="margin-top:6px">${esc(d.db)}</div></div>`;
+    return;
+  }
+  const c = d.counts, st = c.segment_states || {};
+  const k = [
+    [c.conversations, '场对话'], [c.turns, '条消息'], [st.active || 0, '片段在记忆里'], [st.abstract || 0, '只剩关键词'],
+    [st.archived || 0, '片段进了档案'], [c.below_line, '低于遗忘线待处理'], [c.threads, '条事件线'], [c.resident, '常驻'],
+    [c.profile, '条画像事实'], [c.tuning_applied ?? 0, `次调参生效（共 ${c.tuning_log ?? 0} 次请求）`],
+  ];
+  if (c.threads_merged) k.push([c.threads_merged, '条线被合并']);
+  if (c.erased) k.push([c.erased, '次彻底删除']);
+  let html = `<div class="kpis">${k.map(([v, l]) => `<div class="kpi"><div class="v">${v ?? '—'}</div><div class="l">${esc(l)}</div></div>`).join('')}</div>`;
+
+  const segs = [...d.segments].sort((a, b) => (b.strength ?? -1) - (a.strength ?? -1));
+  const fl = d.forget_line;
+  html += `<div class="grid"><section class="card"><h2>片段强度<small>${esc(d.clock)} · 红线是遗忘线 ${fl}</small></h2>
+    <div class="legend"><span><i class="sw" style="background:var(--pos)"></i>正面</span><span><i class="sw" style="background:var(--neg)"></i>负面</span><span><i class="sw" style="background:var(--flat)"></i>平淡</span><span>★ 常驻（强度视为 1）</span><span>半透明：已进档案</span></div>` +
+    (segs.length ? segs.map(s => {
+      const w = s.strength == null ? 0 : s.strength * 100;
+      const [cls, label] = STATE[s.state] || ['todo', s.state];
+      const tip = `半衰期 ${s.half_life?.toFixed(1)} 天 · 调整 ×${s.adjustment ?? 1} · 唤醒 ${s.arousal ?? '—'} · 效价 ${s.valence ?? '—'} · 重要性 ${s.importance ?? '—'} · 回忆 ${s.recall_count ?? 0} 次${s.trace ? ' · 关键词：' + s.trace : ''}`;
+      return `<div class="seg ${s.state === 'archived' ? 'archived' : ''}" title="${esc(tip)}"><span class="title">${s.resident ? '★ ' : ''}${esc(s.state === 'abstract' && s.trace ? s.trace : s.title)} <small>#${s.id}</small></span>
+        <span class="track"><span class="fill" style="width:${w}%;background:${valColor(s.valence)}"></span><span class="fline" style="left:${fl * 100}%"></span></span>
+        <span class="v">${s.strength == null ? `<span class="tag ${cls}">${label}</span>` : s.strength.toFixed(2)}</span></div>`;
+    }).join('') : '<p class="muted">还没有片段（消息要等整理之后才切成片段）。</p>') + `</section>`;
+
+  html += `<div class="stack"><section class="card"><h2>事件线<small>按最近更新排序</small></h2><table><thead><tr><th>#</th><th>标题与摘要</th><th>状态</th></tr></thead><tbody>` +
+    (d.threads.map(t => `<tr><td class="n">${t.id}</td><td><b>${esc(t.title)}</b><div class="muted">${esc(t.summary)}</div><div class="muted" style="font-size:11.5px">片段 ${t.segments.length} 个 · 更新 ${fmt(t.updated_ts)}</div></td>
+      <td>${t.resident_since ? '<span class="tag done">常驻</span>' : ''}${t.exempt ? `<span class="tag ask" title="${esc(t.exempt)}">免竞争</span>` : ''}${t.ongoing ? '<span class="tag tmp">进行中</span>' : '<span class="tag todo">已完结</span>'}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">还没有事件线</td></tr>') +
+    `</tbody></table></section>
+    <section class="card"><h2>用户画像<small>稳定事实，不参与遗忘</small></h2><table><thead><tr><th>谁</th><th>类别</th><th>事实</th><th>提及</th></tr></thead><tbody>` +
+    (d.profile.map(f => `<tr style="${f.archived_ts ? 'opacity:.5' : ''}"><td>${esc(f.person)}</td><td class="muted">${esc(f.category)}</td><td>${esc(f.fact)}${f.archived_ts ? ' <span class="tag todo">已覆盖进档案</span>' : ''}</td><td class="n">${f.mentions}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">还没有画像事实</td></tr>') +
+    `</tbody></table></section></div>`;
+
+  html += `<div class="stack"><section class="card"><h2>常驻栏进出日志<small>最近 30 条</small></h2><table><tbody>` +
+    (d.resident_log.map(r => `<tr><td class="muted">${fmt(r.ts)}</td><td>线 #${r.thread_id}</td><td>${esc(r.action)}</td><td class="muted">${esc(r.reason)}</td></tr>`).join('') || '<tr><td class="muted">暂无</td></tr>') +
+    `</tbody></table></section>
+    <section class="card"><h2>调参日志<small>最近 30 条，包括被拒绝的</small></h2><table><thead><tr><th>对象</th><th>原值 → 请求 → 采用</th><th>理由</th></tr></thead><tbody>` +
+    (d.tuning_log.map(r => `<tr style="${r.applied ? '' : 'opacity:.6'}"><td>${esc(r.scope)} ${esc(r.target)}<div class="muted">${esc(r.knob)}</div></td><td class="n">${(+r.old).toFixed(2)} → ${(+r.requested).toFixed(2)} → ${(+r.new).toFixed(2)}${r.applied ? '' : ' <span class="tag todo">未生效</span>'}</td><td class="muted">${esc(r.reason)}${r.note ? '<br>' + esc(r.note) : ''}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">暂无</td></tr>') +
+    `</tbody></table></section></div></div>`;
+  $('app').innerHTML = html;
+}
+
+let lastKey = '';
+async function load() {
+  try {
+    const r = await fetch('/api/memory', { cache: 'no-store' });
+    const d = await r.json();
+    $('err').innerHTML = '';
+    const { now, ...rest } = d;
+    const key = JSON.stringify(rest);
+    if (key !== lastKey) { lastKey = key; render(d); }
+    $('status').textContent = `已读取 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
+  } catch (e) {
+    $('status').textContent = '读取失败';
+    $('err').innerHTML = `<div class="err">读不到 /api/memory（${esc(e.message)}）。本页要通过新版 serve.py 打开：http://127.0.0.1:8790/live.html；如果服务器是旧版本，请重启它。</div>`;
+  }
+}
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

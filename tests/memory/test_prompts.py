@@ -247,6 +247,7 @@ def test_consolidate_end_to_end_with_fake_model(store):
                     {"scope": "memory", "target": str(seg0.id), "factor": 2.5, "reason": "住院让咳嗽变重要"}
                 ]
             },
+            {"summary": "那天从他妈妈住院聊到周末爬山"},
         ]
     )
     report = consolidate(store, fake, c.id, 180 * DAY + 3600)
@@ -261,8 +262,9 @@ def test_consolidate_end_to_end_with_fake_model(store):
     mom = store.get_thread(thread)
     assert (mom.title, mom.summary) == ("妈妈的健康", "他妈妈先是咳嗽，半年后住院")  # 摘要更新，标题不变
     assert hospital.at_edge and hike.at_edge  # 对话已结束（安静超过 30 分钟）：首、末片段都有加成
-    # 切段 1 次、归属 2 次、摘要 1 次（只有挂到已有线的才更新）、调参 1 次（爬山没有相关旧记忆，不调）
-    assert len(fake.calls) == 5
+    assert store.get_conversation(c.id).summary == "那天从他妈妈住院聊到周末爬山"  # 对话结束：概括这场对话
+    # 切段 1 次、归属 2 次、摘要 1 次（只有挂到已有线的才更新）、调参 1 次（爬山没有相关旧记忆，不调）、对话摘要 1 次
+    assert len(fake.calls) == 6
 
 
 def test_last_segment_marked_once_when_conversation_ends(store):
@@ -303,8 +305,10 @@ def test_last_segment_marked_once_when_conversation_ends(store):
     consolidate(store, FakeModel([seg_reply, new, new]), c.id, 200)  # 对话还没结束
     a, b = store.segments(c.id)
     assert a.at_edge and not b.at_edge
-    consolidate(store, FakeModel([]), c.id, 200 + 3600)  # 一小时后：已结束，补标末个片段
-    consolidate(store, FakeModel([]), c.id, 200 + 7200)  # 再调用也不会重复加成
+    consolidate(
+        store, FakeModel([{"summary": "聊了 A 和 B"}]), c.id, 200 + 3600
+    )  # 一小时后：已结束，补标末个片段并概括
+    consolidate(store, FakeModel([]), c.id, 200 + 7200)  # 再调用也不会重复加成，也不会再概括
     b2 = store.get_segment(b.id)
     assert b2.at_edge and b2.half_life == pytest.approx(b.half_life * 1.5)
 

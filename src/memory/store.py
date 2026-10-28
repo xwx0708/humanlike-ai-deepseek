@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS segment_links (
 CREATE TABLE IF NOT EXISTS threads (
     id INTEGER PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL,
     created_ts REAL NOT NULL, updated_ts REAL NOT NULL, merged_into INTEGER REFERENCES threads(id),
-    ongoing INTEGER NOT NULL DEFAULT 1, resident_since REAL, exempt TEXT
+    ongoing INTEGER NOT NULL DEFAULT 1, resident_since REAL, exempt TEXT, forgotten_ts REAL
 );
 CREATE TABLE IF NOT EXISTS sweep_log (
     id INTEGER PRIMARY KEY, ts REAL NOT NULL, archived TEXT NOT NULL, kept TEXT NOT NULL
@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS thread_links (
     a INTEGER NOT NULL REFERENCES threads(id), b INTEGER NOT NULL REFERENCES threads(id),
     note TEXT NOT NULL, PRIMARY KEY (a, b)
 );
+CREATE TABLE IF NOT EXISTS erase_log (
+    id INTEGER PRIMARY KEY, ts REAL NOT NULL, segments INTEGER NOT NULL, turns INTEGER NOT NULL, reason TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS people (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS aliases (
     alias TEXT PRIMARY KEY, person_id INTEGER NOT NULL REFERENCES people(id)
@@ -117,6 +121,8 @@ class MemoryStore:
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(threads)")}
         if "exempt" not in cols:  # D18 之前建的库
             self.db.execute("ALTER TABLE threads ADD COLUMN exempt TEXT")
+        if "forgotten_ts" not in cols:  # D25 之前建的库
+            self.db.execute("ALTER TABLE threads ADD COLUMN forgotten_ts REAL")
 
     def close(self) -> None:
         self.db.close()
@@ -145,6 +151,20 @@ class MemoryStore:
     def get_conversation(self, cid: int) -> Conversation:
         r = self.db.execute("SELECT * FROM conversations WHERE id = ?", (cid,)).fetchone()
         return Conversation(r["id"], r["start_ts"], r["end_ts"], r["summary"])
+
+    def conversation_ids(self) -> list[int]:
+        return [r[0] for r in self.db.execute("SELECT id FROM conversations ORDER BY start_ts, id")]
+
+    def all_turn_texts(self) -> list[str]:
+        return [r[0] for r in self.db.execute("SELECT content FROM turns ORDER BY id")]
+
+    def get_meta(self, key: str, default: str | None = None) -> str | None:
+        r = self.db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return r[0] if r else default
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
 
     def last_conversation(self) -> Conversation | None:
         r = self.db.execute("SELECT id FROM conversations ORDER BY end_ts DESC LIMIT 1").fetchone()
@@ -429,7 +449,7 @@ class MemoryStore:
         return [
             r[0]
             for r in self.db.execute(
-                "SELECT id FROM threads WHERE resident_since IS NOT NULL AND merged_into IS NULL ORDER BY resident_since"
+                "SELECT id FROM threads WHERE resident_since IS NOT NULL AND merged_into IS NULL AND forgotten_ts IS NULL ORDER BY resident_since"
             )
         ]
 
@@ -451,7 +471,7 @@ class MemoryStore:
         return {
             r[0]: r[1]
             for r in self.db.execute(
-                "SELECT id, exempt FROM threads WHERE exempt IS NOT NULL AND merged_into IS NULL"
+                "SELECT id, exempt FROM threads WHERE exempt IS NOT NULL AND merged_into IS NULL AND forgotten_ts IS NULL"
             )
         }
 
@@ -497,11 +517,115 @@ class MemoryStore:
             self.db.execute("UPDATE threads SET merged_into = ? WHERE id = ?", (keep, drop))
             self.db.execute("UPDATE threads SET updated_ts = MAX(updated_ts, ?) WHERE id = ?", (ts, keep))
 
+    # ---------- 忘掉（D25）：用户选择存进档案，或彻底删除 ----------
+
+    def forget_thread_to_archive(self, tid: int, ts: float) -> list[int]:
+        """存进档案：这条线和它的片段不再出现在记忆系统里，原文留着，用户要求时可以搜索找回。
+        只出自这条线的画像事实一起移进档案。返回移进档案的片段。"""
+        sids = self.get_thread(tid).segment_ids
+        marks = ",".join("?" * len(sids)) or "NULL"
+        with self.db:
+            self.db.execute(
+                "UPDATE threads SET forgotten_ts = ?, resident_since = NULL WHERE id = ? OR merged_into = ?",
+                (ts, tid, tid),
+            )
+            self.db.execute(f"UPDATE segments SET state = 'archived' WHERE id IN ({marks})", sids)
+            self.db.execute(
+                "INSERT INTO resident_log (thread_id, ts, action, reason, score) VALUES (?, ?, '退出', ?, NULL)",
+                (tid, ts, "用户要求忘掉（存进档案）"),
+            )
+            for fid in self._facts_only_from(sids):
+                self.db.execute(
+                    "UPDATE profile_facts SET archived_ts = ? WHERE id = ? AND archived_ts IS NULL", (ts, fid)
+                )
+        return sids
+
+    def restore_thread(self, tid: int) -> None:
+        """从档案找回一条被用户忘掉的线：重新回到记忆系统（片段的状态由调用方处理）。"""
+        with self.db:
+            self.db.execute(
+                "UPDATE threads SET forgotten_ts = NULL WHERE id = ? OR merged_into = ?", (tid, tid)
+            )
+
+    def forgotten_thread_ids(self) -> list[int]:
+        return [r[0] for r in self.db.execute("SELECT id FROM threads WHERE forgotten_ts IS NOT NULL")]
+
+    def _facts_only_from(self, sids: list[int]) -> list[int]:
+        """出处全部在 sids 里的画像事实。"""
+        marks = ",".join("?" * len(sids)) or "NULL"
+        rows = self.db.execute(
+            f"SELECT fact_id FROM profile_sources GROUP BY fact_id "
+            f"HAVING SUM(segment_id NOT IN ({marks})) = 0",
+            sids,
+        )
+        return [r[0] for r in rows]
+
+    def erase_thread(self, tid: int, ts: float, reason: str) -> tuple[int, int]:
+        """彻底删除：这条线、它的片段、只属于这些片段的消息原文、只出自它们的画像事实，以及相关的日志，
+        全部从数据库删掉，不可恢复。只记一条不含内容的删除日志。返回 (删掉的片段数, 删掉的消息数)。"""
+        tids = [tid, *[r[0] for r in self.db.execute("SELECT id FROM threads WHERE merged_into = ?", (tid,))]]
+        sids = self.get_thread(tid).segment_ids
+        sm = ",".join("?" * len(sids)) or "NULL"
+        tm = ",".join("?" * len(tids))
+        # 只属于这些片段的消息；同时属于别的片段的消息不删（那是别的记忆）
+        turns = [
+            r[0]
+            for r in self.db.execute(
+                f"SELECT turn_id FROM segment_turns GROUP BY turn_id HAVING SUM(segment_id NOT IN ({sm})) = 0 "
+                f"AND SUM(segment_id IN ({sm})) > 0",
+                [*sids, *sids],
+            )
+        ]
+        um = ",".join("?" * len(turns)) or "NULL"
+        facts = self._facts_only_from(sids)
+        fm = ",".join("?" * len(facts)) or "NULL"
+        with self.db:
+            ex = self.db.execute
+            ex(
+                f"DELETE FROM evocations WHERE fact_id IN ({fm}) OR trigger_fact_id IN ({fm})",
+                [*facts, *facts],
+            )
+            ex(f"DELETE FROM profile_conflicts WHERE old_id IN ({fm}) OR new_id IN ({fm})", [*facts, *facts])
+            ex(f"UPDATE profile_facts SET superseded_by = NULL WHERE superseded_by IN ({fm})", facts)
+            ex(f"DELETE FROM profile_sources WHERE segment_id IN ({sm})", sids)
+            ex(f"DELETE FROM profile_facts WHERE id IN ({fm})", facts)
+            ex(f"DELETE FROM tuning_log WHERE scope = 'memory' AND target IN ({sm})", [str(i) for i in sids])
+            for i in sids:  # 依据这些片段做出的调整，理由里可能带着内容，一起删
+                ex("DELETE FROM tuning_log WHERE json_extract(evidence, '$.segment') = ?", (i,))
+            for r in list(ex("SELECT id, archived, kept FROM sweep_log")):
+                arch = [i for i in json.loads(r[1]) if i not in sids]
+                kept = {k: v for k, v in json.loads(r[2]).items() if int(k) not in sids}
+                ex(
+                    "UPDATE sweep_log SET archived = ?, kept = ? WHERE id = ?",
+                    (json.dumps(arch), json.dumps(kept, ensure_ascii=False), r[0]),
+                )
+            ex(f"DELETE FROM segment_links WHERE from_id IN ({sm}) OR to_id IN ({sm})", [*sids, *sids])
+            ex(f"DELETE FROM segment_people WHERE segment_id IN ({sm})", sids)
+            ex(f"DELETE FROM segment_turns WHERE segment_id IN ({sm})", sids)
+            ex(
+                f"DELETE FROM thread_segments WHERE thread_id IN ({tm}) OR segment_id IN ({sm})",
+                [*tids, *sids],
+            )
+            ex(f"DELETE FROM segments WHERE id IN ({sm})", sids)
+            ex(f"DELETE FROM boundaries WHERE turn_id IN ({um})", turns)
+            ex(f"DELETE FROM turns WHERE id IN ({um})", turns)
+            ex(f"DELETE FROM thread_links WHERE a IN ({tm}) OR b IN ({tm})", [*tids, *tids])
+            ex(f"DELETE FROM resident_log WHERE thread_id IN ({tm})", tids)
+            ex(f"DELETE FROM threads WHERE id IN ({tm})", tids)
+            ex(
+                "INSERT INTO erase_log (ts, segments, turns, reason) VALUES (?, ?, ?, ?)",
+                (ts, len(sids), len(turns), reason),
+            )
+        return len(sids), len(turns)
+
+    def erase_log(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self.db.execute("SELECT * FROM erase_log ORDER BY id")]
+
     def live_threads(self) -> list[int]:
         return [
             r[0]
             for r in self.db.execute(
-                "SELECT id FROM threads WHERE merged_into IS NULL ORDER BY updated_ts DESC"
+                "SELECT id FROM threads WHERE merged_into IS NULL AND forgotten_ts IS NULL ORDER BY updated_ts DESC"
             )
         ]
 
@@ -731,7 +855,7 @@ class MemoryStore:
             r[0]
             for r in self.db.execute(
                 f"SELECT DISTINCT ts.thread_id FROM thread_segments ts JOIN segment_people sp ON sp.segment_id = ts.segment_id "
-                f"JOIN threads t ON t.id = ts.thread_id WHERE t.merged_into IS NULL AND sp.person_id IN ({marks})",
+                f"JOIN threads t ON t.id = ts.thread_id WHERE t.merged_into IS NULL AND t.forgotten_ts IS NULL AND sp.person_id IN ({marks})",
                 person_ids,
             )
         ]
@@ -744,7 +868,7 @@ class MemoryStore:
             for r in self.db.execute(
                 "SELECT DISTINCT ts.thread_id FROM turns tu JOIN segment_turns st ON st.turn_id = tu.id "
                 "JOIN thread_segments ts ON ts.segment_id = st.segment_id JOIN threads t ON t.id = ts.thread_id "
-                f"WHERE t.merged_into IS NULL AND instr(tu.content, ?) > 0 AND tu.id NOT IN ({excl})",
+                f"WHERE t.merged_into IS NULL AND t.forgotten_ts IS NULL AND instr(tu.content, ?) > 0 AND tu.id NOT IN ({excl})",
                 (text, *exclude_turns),
             )
         ]

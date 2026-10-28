@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>总流程</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f7f7f4; --surface: #ffffff; --ink: #121212; --ink-2: #4a4945; --muted: #85837c;
+    --grid: #e1e0d9; --border: rgba(11,11,11,.13); --arrow: #6d6b65; --halo: #f7f7f4;
+    --done: #12925f; --done-bg: rgba(18,146,95,.10);
+    --tmp: #c27c00; --tmp-bg: rgba(237,161,0,.14);
+    --todo: #8a8880; --todo-bg: rgba(138,136,128,.10);
+    --ask: #7c4ddb; --ask-bg: rgba(124,77,219,.11);
+    --think: #2a78d6; --sub: #e0612b; --py: #5b6b80;
+    --now: rgba(42,120,214,.07); --sea: rgba(18,146,140,.08); --arch: rgba(160,110,50,.09);
+    --group: rgba(11,11,11,.025);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0e0e0e; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8d86;
+      --grid: #2c2c2a; --border: rgba(255,255,255,.13); --arrow: #9a988f; --halo: #0e0e0e;
+      --done: #2fbf86; --done-bg: rgba(47,191,134,.14);
+      --tmp: #e5a920; --tmp-bg: rgba(229,169,32,.15);
+      --todo: #8f8d86; --todo-bg: rgba(143,141,134,.12);
+      --ask: #a888f0; --ask-bg: rgba(168,136,240,.16);
+      --think: #4a94ec; --sub: #ee7a45; --py: #8e9cb0;
+      --now: rgba(74,148,236,.09); --sea: rgba(47,191,180,.08); --arch: rgba(205,150,80,.09);
+      --group: rgba(255,255,255,.025);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0e0e0e; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8d86;
+    --grid: #2c2c2a; --border: rgba(255,255,255,.13); --arrow: #9a988f; --halo: #0e0e0e;
+    --done: #2fbf86; --done-bg: rgba(47,191,134,.14);
+    --tmp: #e5a920; --tmp-bg: rgba(229,169,32,.15);
+    --todo: #8f8d86; --todo-bg: rgba(143,141,134,.12);
+    --ask: #a888f0; --ask-bg: rgba(168,136,240,.16);
+    --think: #4a94ec; --sub: #ee7a45; --py: #8e9cb0;
+    --now: rgba(74,148,236,.09); --sea: rgba(47,191,180,.08); --arch: rgba(205,150,80,.09);
+    --group: rgba(255,255,255,.025);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 13px/1.5 "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
+  main { max-width: 1880px; margin: 0 auto; padding: 12px 16px 28px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 22px; margin-bottom: 8px; }
+  h1 { font-size: 20px; margin: 0; }
+  .sub { color: var(--ink-2); }
+  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; font-size: 12px; color: var(--ink-2);
+            margin: 0 0 10px; }
+  .legend .grp { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; }
+  .legend .grp > b { color: var(--muted); font-weight: 500; }
+  .zone-sw { display: inline-block; width: 14px; height: 12px; border-radius: 3px; border: 1px solid var(--border); vertical-align: -2px; margin-right: 4px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
+
+  .canvas-wrap { overflow-x: auto; }
+  svg#map { display: block; width: 100%; min-width: 1400px; height: auto; }
+  svg#map text { font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
+  .zone-label { font-size: 13px; font-weight: 600; fill: var(--ink-2); }
+  .col-label { font-size: 12px; fill: var(--muted); }
+  .alabel { font-size: 11.5px; fill: var(--ink-2); paint-order: stroke; stroke: var(--halo); stroke-width: 4px; stroke-linejoin: round; }
+  .edge { fill: none; stroke: var(--arrow); stroke-width: 1.4; }
+  .edge.todo { stroke-dasharray: 5 4; opacity: .85; }
+
+  /* 方块（foreignObject 里的 HTML） */
+  .box { height: 100%; position: relative; overflow: hidden; background: var(--surface);
+         border: 1px solid var(--border); border-radius: 9px; padding: 5px 8px 5px 12px; font-size: 11.5px; line-height: 1.38; color: var(--ink); }
+  .box::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--st); }
+  .box.todo { border-style: dashed; background: color-mix(in srgb, var(--surface) 70%, transparent); }
+  .box.todo .lines { color: var(--muted); }
+  .box.compact { display: flex; align-items: center; gap: 6px; padding-top: 0; padding-bottom: 0; }
+  .box:hover { border-color: var(--st); }
+  .box .hd { display: flex; align-items: center; gap: 5px; flex-wrap: nowrap; }
+  .box .t { font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .box .who { margin-left: auto; display: flex; gap: 6px; flex: none; font-size: 11px; color: var(--ink-2); }
+  .box .lines { margin: 2px 0 0; padding: 0; list-style: none; color: var(--ink-2); }
+  .box .lines li { position: relative; padding-left: 9px; }
+  .box .lines li::before { content: "·"; position: absolute; left: 0; color: var(--muted); }
+  .box .lines b { color: var(--ink); font-weight: 600; }
+  .box.cols3 .lines { columns: 3; column-gap: 22px; }
+  .box.cols2 .lines { columns: 2; column-gap: 18px; }
+  .box .tags { display: flex; flex-wrap: wrap; gap: 2px 4px; margin-top: 3px; }
+  .box .ref { color: var(--muted); font-size: 10.5px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .num { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+         background: var(--ink); color: var(--page); font-size: 11px; font-weight: 700; }
+  .tag { display: inline-block; font-size: 10.5px; line-height: 15px; padding: 0 6px; border-radius: 999px;
+         color: var(--c); background: var(--bg); border: 1px solid color-mix(in srgb, var(--c) 35%, transparent); white-space: nowrap; }
+  .tag.done { --c: var(--done); --bg: var(--done-bg); }
+  .tag.tmp  { --c: var(--tmp);  --bg: var(--tmp-bg); }
+  .tag.todo { --c: var(--todo); --bg: var(--todo-bg); }
+  .tag.ask  { --c: var(--ask);  --bg: var(--ask-bg); }
+  .tag.done::before { content: "✓ "; }
+  .tag.tmp::before { content: "◐ "; }
+  .tag.todo::before { content: "○ "; }
+  .tag.ask::before { content: "? "; }
+
+  .strip { height: 100%; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-radius: 10px;
+           border: 1px solid var(--border); background: var(--surface); font-size: 12px; color: var(--ink-2); }
+  .strip > b { color: var(--ink); font-size: 13px; white-space: nowrap; }
+  .strip .chip { white-space: nowrap; padding: 2px 8px; border-radius: 6px; border: 1px solid var(--border); }
+  .strip .chip small { color: var(--muted); }
+  .stage { flex: 1; align-self: stretch; margin: 7px 0; padding: 4px 10px; border-radius: 8px; background: var(--group);
+           border: 1px solid var(--border); line-height: 1.4; }
+  .stage b { color: var(--ink); }
+  .chev { color: var(--muted); font-size: 18px; }
+
+  .tip { position: fixed; z-index: 10; max-width: 380px; pointer-events: none; display: none;
+         background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 8px 11px;
+         box-shadow: 0 6px 22px rgba(0,0,0,.22); font-size: 12.5px; line-height: 1.55; }
+  .tip h4 { margin: 0 0 4px; font-size: 13.5px; }
+  .tip ul { margin: 0; padding-left: 16px; color: var(--ink-2); }
+  .tip .ref { color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+
+  /* 图下方的三栏 */
+  .below { display: grid; grid-template-columns: 1.05fr 1.25fr .9fr; gap: 14px; margin-top: 14px; }
+  @media (max-width: 1300px) { .below { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px 12px; }
+  .card h2 { font-size: 14px; margin: 0 0 8px; }
+  .card h2 small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  ol.life { list-style: none; margin: 0; padding: 0; }
+  ol.life li { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: start; padding: 5px 0;
+               border-bottom: 1px solid var(--grid); }
+  ol.life li:last-child { border-bottom: 0; }
+  ol.life .num { margin-top: 1px; }
+  ol.life .what b { display: block; }
+  ol.life .what span { color: var(--ink-2); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+  td.dir { white-space: nowrap; color: var(--ink-2); }
+  td .cn { color: var(--ink-2); font-size: 12px; }
+  ul.open { margin: 0; padding-left: 0; list-style: none; }
+  ul.open li { padding: 5px 0; border-bottom: 1px solid var(--grid); }
+  ul.open li:last-child { border-bottom: 0; }
+  ul.open .src { color: var(--muted); font-size: 11.5px; }
+  footer { color: var(--muted); font-size: 12px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <nav class="sitenav"></nav><script src="nav.js"></script>
+  <header>
+    <h1>总流程表 · 整个体系的架构</h1>
+    <span class="sub">一条消息从进来，到被记住、被遗忘、被找回；每个方块标出实现状态。把鼠标放到方块上看细节和出处。</span>
+  </header>
+  <div class="legend" id="legend">
+    <div class="grp"><b>状态</b>
+      <span class="tag done">已完成</span><span class="tag tmp">暂行</span><span class="tag todo">未做</span><span class="tag ask">待用户确认</span>
+    </div>
+    <div class="grp"><b>谁来做</b>
+      <span><i class="dot" style="background:var(--think)"></i>思考模型（默认 DeepSeek）</span>
+      <span><i class="dot" style="background:var(--sub)"></i>潜意识模型（默认本地 Qwen）</span>
+      <span><i class="dot" style="background:var(--py)"></i>Python 硬公式 / 规则</span>
+    </div>
+    <div class="grp"><b>三层</b>
+      <span><i class="zone-sw" style="background:var(--now)"></i>当下（上下文）</span>→
+      <span><i class="zone-sw" style="background:var(--sea)"></i>概率海（非当下）</span>→
+      <span><i class="zone-sw" style="background:var(--arch)"></i>档案（被遗忘的原文）</span>
+    </div>
+    <div class="grp"><b>箭头</b><span>实线：已接通　虚线：还没接通</span><span>①～⑩：一条消息的一生（见下方）</span></div>
+  </div>
+
+  <div class="canvas-wrap">
+    <svg id="map" viewBox="0 0 1800 1110" role="img" aria-label="整个体系的架构总图"></svg>
+  </div>
+
+  <div class="below">
+    <section class="card">
+      <h2>一条消息的一生<small>图中的 ①～⑩</small></h2>
+      <ol class="life" id="life"></ol>
+    </section>
+    <section class="card">
+      <h2>模块之间的接口<small>依据 00-总纲/接口约定.md</small></h2>
+      <table id="ifaces"><thead><tr><th>接口</th><th>方向</th><th>内容</th><th>状态</th></tr></thead><tbody></tbody></table>
+    </section>
+    <section class="card">
+      <h2>等你拍板的<small>摘自 00-总纲/待你确认.md</small></h2>
+      <ul class="open" id="open"></ul>
+    </section>
+  </div>
+  <footer>
+    状态依据：00-总纲/待办.md（2026-10-28 第六次更新）、偏离记录.md、决策日志 D1～D25、待你确认.md。本页数据写在页面脚本的 BOXES / LIFE / IFACES / OPEN 里；
+    文档更新后需要同步修改这里（记忆对话正在实现的新功能，在文档记录之前不会出现在本页）。实时的文档内容见「全部工作」页。
+  </footer>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+// ────────────────────────────── 数据 ──────────────────────────────
+// 状态：done 已完成 / tmp 暂行 / todo 未做 / ask 待用户确认。who：think 思考模型 / sub 潜意识模型 / py Python
+const WHO = { think: '思考模型', sub: '潜意识模型', py: 'Python' };
+const ST = { done: '已完成', tmp: '暂行', todo: '未做', ask: '待用户确认' };
+
+// 区域（底色 + 标签），坐标是 viewBox 里的像素
+const ZONES = [
+  { x: 0, y: 340, w: 300, h: 560, fill: 'var(--group)', label: '情绪模块', sub: '02-情绪 · 还没开对话' },
+  { x: 330, y: 340, w: 1470, h: 560, fill: 'var(--group)', label: '记忆模块', sub: '01-记忆 · src/memory' },
+  { x: 1013, y: 376, w: 477, h: 519, fill: 'var(--sea)', label: '概率海（非当下）', sub: '带强度的长期记忆，按概率被想起', inner: true },
+  { x: 1513, y: 588, w: 282, h: 307, fill: 'var(--arch)', label: '档案', sub: '被遗忘的原文，平时碰不到', inner: true },
+  { x: 0, y: 930, w: 1800, h: 172, fill: 'var(--group)', label: '模型调用层', sub: '00-总纲 · src/llm · contracts/llm.py（各模块共用）' },
+];
+const COLS = [
+  { x: 350, y: 393, t: '实时 · 每条消息进来时' },
+  { x: 615, y: 393, t: '潜意识整理 · 对话停顿时（批量、异步；由后台调度 tick 触发）' },
+  { x: 1525, y: 393, t: '时间' },
+];
+
+const BOXES = [
+  // 顶部两条
+  { id: 'gov', kind: 'strip', x: 0, y: 0, w: 1800, h: 50 },
+  { id: 'life', kind: 'life', x: 0, y: 62, w: 1800, h: 66 },
+
+  { id: 'user', x: 0, y: 150, w: 150, h: 150, title: '用户',
+    lines: ['发消息、收回复', '说"记住这个"', '说"想起来"/"忘掉"'],
+    more: ['"记住这个"：所在事件线免竞争常驻（D17）', '"忘掉这件事"：连档案一起彻底删除（设想文档"真正的删除权"，待办 #15，未做）'] },
+
+  { id: 'resp', x: 190, y: 140, w: 1320, h: 170, title: '回应模块 · 思考模型', who: ['think'], cls: 'cols3', tint: 'var(--now)',
+    tags: [['todo', '未做：还没开对话']],
+    lines: ['<b>当下</b>＝上下文窗口（工作记忆）：理解用户的话，组织回复',
+            '每轮带上<b>常驻栏</b>：背景知道就好，不刻意提起',
+            '看一眼<b>浮现区</b>，自己决定提不提',
+            '需要时<b>主动检索</b>概率海',
+            '重要但记不清时<b>请求翻档案</b>，先说"我找找"',
+            '<b>真正用到</b>某条记忆时回执给记忆模块（加固）',
+            '参考情绪模块<b>定语气</b>',
+            '决定什么时候<b>调用行动模块</b>'],
+    more: ['D1：长上下文不是方向，上下文只作"当下"的工作区', 'D2：思考模型自己主动检索记忆，潜意识只维护记忆库', '只有思考模型真正用到才算回忆，仅仅浮现不算（D20）'],
+    ref: '03-回应/README.md · 架构总图 · D1 · D2 · D20' },
+
+  { id: 'action', x: 1540, y: 140, w: 260, h: 170, title: '行动模块 · 手脚', tags: [['todo', '未做：还没开对话']],
+    lines: ['通过 MCP 等协议调用外部工具', '结果交还回应模块', '任务时段报给记忆时钟', '做过的事交给记忆（格式待定）'],
+    more: ['任务时段：任务开始、结束后调用 MemoryStore.add_busy_span(start, end, note)，记忆时钟照常流动（D21，待办 #18）', '行动记录（行动 → 记忆）的格式：接口约定"待定"'],
+    ref: '04-行动/README.md · 接口约定' },
+
+  // 情绪模块
+  { id: 'e1', x: 15, y: 385, w: 270, h: 100, title: '实时粗略情绪 QuickMood', tags: [['todo', '未做']],
+    lines: ['每条消息一个，供 AI 心情使用', '规则 + 本地小分类器，不调用思考模型'],
+    ref: '事件切分.md"两个特例" · 接口约定' },
+  { id: 'e2', x: 15, y: 495, w: 270, h: 145, title: '正式情绪分 EmotionScore',
+    tags: [['tmp', '暂行：由切段提示词一起输出'], ['ask', '待确认：归哪个模块']],
+    lines: ['按峰终定律给片段打分：唤醒度 0～1、效价 -1～1、重要性 0～1、理由', '只打一次，未取平均'],
+    more: ['偏离 #1：正式情绪分由切段提示词一起输出，代码在记忆模块（暂行）', '偏离 #3：设想是打两三次取平均、用人工标注测试集检查漂移；现在只打一次（暂行）', '架构总图边界问题 1：情绪打分归哪个模块，未定'],
+    ref: '偏离 #1 #3 · 架构总图边界问题 1' },
+  { id: 'e3', x: 15, y: 653, w: 270, h: 110, title: '情绪基线', tags: [['tmp', '暂行：基线按 0 计算']],
+    lines: ['长期基线（以月计）：算相对唤醒度', '短期心情（以天计）；先减后更新'],
+    more: ['设想文档"情绪基线"：本事件情绪先减去基础情绪值', '偏离 #2：情绪基线还没实现，暂按 0 计算'],
+    ref: '偏离 #2 · 设想文档"情绪基线"' },
+  { id: 'e4', x: 15, y: 776, w: 270, h: 110, title: '以后：AI 自身的情绪', tags: [['todo', '以后再说']],
+    lines: ['愿景："以后可能有 AI 自身的情绪"', '设想文档：先只给用户的情绪打分'],
+    ref: '愿景 · 架构总图' },
+
+  // 记忆 · 实时
+  { id: 'a1', x: 350, y: 405, w: 240, h: 125, n: [1], title: '切段第一层：标候选边界', who: ['py'], tags: [['done', '已完成']],
+    lines: ['间隔 > 30 分钟 → 新的一场对话', '语言信号"对了""换个话题"', '满 30 条 / 60 分钟强制标一次'],
+    more: ['语言信号只看用户的消息', '跨零点只标候选，不拆对话（偏离 #4，已同意）', '阈值暂定（待办"还没定的设计问题"）'],
+    ref: 'D14 · boundaries.py' },
+  { id: 'a2', x: 350, y: 545, w: 240, h: 66, n: [1], title: '原文入档', who: ['py'], tags: [['done', '已完成']],
+    lines: ['原文写进 turns 表，永久保存'],
+    more: ['遗忘只影响片段，原文一直在（D12）', '设想文档：熟悉期不启动系统，但也要实时把原文存进档案', '出处：D12 · store.py'] },
+  { id: 'tick', x: 350, y: 655, w: 240, h: 98, title: '后台调度 tick', who: ['py'], tags: [['tmp', '已做；归谁待定']],
+    lines: ['熟悉期：只查要不要启动', '停顿 25 分钟后整理；凌晨合并'],
+    more: ['runner.tick()：熟悉期只检查是否该启动；运行期对话停顿 25 分钟后整理（暂定，与记忆时钟减速点相同）；凌晨 3 点后第一次 tick 做夜间合并（暂定）', '入口：python -m memory.runner，每分钟 tick 一次', '后台时钟归哪个模块还没定（架构总图边界问题 3，待办 #19）'],
+    ref: '待办 #19 · runner.py' },
+  { id: 'a3', x: 350, y: 760, w: 240, h: 128, title: '存储 SQLite', who: ['py'], tags: [['done', '已完成']],
+    lines: ['data/memory.db 单文件，不进版本库', '对话、消息、片段、事件线、画像、各种日志'],
+    more: ['只存取，不做判断', '表：对话、消息、候选边界、片段、事件线、人物别名、用户画像、常驻日志、全局参数、调参日志、批量遗忘日志、合并日志、删除日志'],
+    ref: 'D12 · 存储与提示词.md · store.py' },
+
+  // 记忆 · 潜意识整理
+  { id: 'b1', x: 615, y: 405, w: 370, h: 100, n: [2], title: '切段第二层：确认片段', who: ['sub'],
+    tags: [['done', '已完成'], ['done', '长对话分批'], ['tmp', '"接着聊到"只按顺序成链']],
+    lines: ['合并 / 拆分候选，每个片段一句话标题', '顺便输出人物别名、情绪分、稳定事实、是否要求记住'],
+    more: ['片段是打分和遗忘的基本单位（D6）', '长对话分批切段：每批约 6000 token（暂定；待办 #4 已完成）', '偏离 #5："接着聊到"设想是一张图，整理流程只按先后连成链（暂行）'],
+    ref: 'D6 · D12 · prompts.py · subconscious.py' },
+  { id: 'b2', x: 615, y: 520, w: 370, h: 64, title: '事件线候选：五种来源，上限 20', who: ['py'],
+    tags: [['done', '已完成'], ['tmp', '超 20 条的排序暂行']],
+    more: ['最近活跃 ∪ 人物重合 ∪ jieba + BM25 关键词 ∪ 档案人名强匹配；常驻栏单独一栏、不占名额（D17）', '超过 20 条：命中来源多的优先，其次最近活跃（偏离 #9，暂行）', '不使用嵌入模型（D10）'],
+    ref: 'D10 · D15 · D17 · candidates.py' },
+  { id: 'b3', x: 615, y: 597, w: 370, h: 64, n: [3], title: '判断事件线归属 · 更新摘要', who: ['sub'], tags: [['done', '已完成']],
+    more: ['挂到已有线（可多条）或新建；把握低于 0.6 就新建，原想挂的线记成"有关"', '挂上已有线时更新一句话摘要；新建时判断是否在进行中'],
+    ref: 'D12 · D14 · D17' },
+  { id: 'b4', x: 615, y: 674, w: 370, h: 83, n: [4], title: '回头改旧记忆：修改参数 + 护栏', who: ['sub', 'py'],
+    tags: [['done', '已完成'], ['tmp', '全局长期调整流程暂行']],
+    lines: ['例："我妈住院了"拉长"我妈最近老咳嗽"的半衰期'],
+    more: ['只能改参数，不能改公式（D7）', '单条：单次 ×3、累积 ×5 以内；同一轮每条最多调一次', '事件完结前系数不低于 1（D19）', '全局参数：单次 ±10%，默认值 1/1.5～1.5 倍，同一参数间隔 7 天（D8）', '所有请求都记日志，包括被拒绝的', '不要类别层（D23）；全局长期调整流程暂行（偏离 #7）'],
+    ref: 'D7 · D8 · D19 · D23 · tuning.py' },
+  { id: 'b5', x: 615, y: 769, w: 180, h: 40, kind: 'compact', title: '末片段首尾加成 ×1.5', who: ['py'], st: 'done',
+    more: ['对话结束（安静 > 30 分钟或已开新对话）时，给最后一个片段补上首尾加成，只生效一次'], ref: 'D14' },
+  { id: 'b6', x: 805, y: 769, w: 180, h: 40, kind: 'compact', n: [5], title: '常驻栏重排', who: ['py'], st: 'done',
+    more: ['每次整理结束时重新计算常驻栏（D17）'], ref: 'D17 · resident.py' },
+  { id: 'b7', x: 615, y: 824, w: 370, h: 66, n: [8], title: '批量遗忘：95% 进档案，5% 留关键词', who: ['py', 'sub'],
+    tags: [['done', '已完成'], ['done', '对话摘要随遗忘重新概括']],
+    more: ['低于遗忘线的攒够 20 条，按到达遗忘线的先后取一批，不分类（D22，偏离 #15）', '19 条移进档案，不再出现在记忆系统里', '随机留 1 条（D23），潜意识模型提取 2～4 个关键词，重新开始一条遗忘曲线', '常驻栏里的不参与', '"一场对话"的摘要：对话结束时概括一次，批量遗忘后重新概括（待办 #7 已完成）'],
+    ref: 'D22 · D23 · sweep.py' },
+
+  // 记忆 · 概率海
+  { id: 'c1', x: 1023, y: 405, w: 220, h: 130, title: '常驻栏', who: ['py'], tags: [['done', '已完成'], ['tmp', '回应未接入']],
+    lines: ['免竞争三类，一旦成立不退出', '其余事件线竞争 20 个名额', '常驻期间不遗忘'],
+    more: ['免竞争：用户画像的出处 / 用户要求记住 / 至少 3 场对话提及（D17）；除非用户要求修改，否则不退出（D18）', '竞争得分：重要性 35% + 情绪强度 25% + 活跃度 25% + 回忆频率 15%；进行中 ×1.5', '回忆频率现在恒为 0（偏离 #12）；思考模型还没接入（偏离 #13）', '识别"用户要求修改常驻"还没做（待办 #17）'],
+    ref: 'D17 · D18 · resident.py' },
+  { id: 'c2', x: 1023, y: 548, w: 220, h: 150, n: [6], title: '片段 · 对话 · 事件线', who: ['py'], tags: [['done', '已完成']],
+    lines: ['强度 S = 0.5^(Δt / H)', 'H = H₀ × 情绪 × 重要性 × 首尾 × 调整', 'Δt 用记忆时钟量', '低于遗忘线 0.1 → 待遗忘'],
+    more: ['三层结构：事件线（跨天的同一件事）→ 一场对话 → 片段（D6）', '平淡小事约 3 周遗忘；有点情绪约两个半月；很强烈约半年', '效价不进入半衰期，只影响浮现概率'],
+    ref: '遗忘曲线.md · forgetting.py' },
+  { id: 'c3', x: 1023, y: 711, w: 220, h: 100, title: '用户画像', who: ['py', 'sub'], tags: [['done', '已完成'], ['tmp', '唤起只进待浮现列表']],
+    lines: ['稳定事实，不参与遗忘', '矛盾时掷骰：唤起 / 覆盖 / 都不'],
+    more: ['只收稳定事实，排除一时状态和相对时间的事（D15）', '矛盾按旧记录的牢固度掷骰子三选一（D16）；覆盖的旧事实移进档案，可以找回', '被唤起的旧事实先记在 evocations 表，等浮现区实现（偏离 #11）'],
+    ref: 'D15 · D16 · profile.py' },
+  { id: 'c4', x: 1023, y: 824, w: 220, h: 66, n: [8], title: '关键词残留 5%', who: ['sub'], tags: [['done', '已完成']],
+    more: ['每条 2～4 个关键词，每个不超过 6 个字', '按原来的情绪和重要性重新算半衰期，不带首尾加成和以前的调整'], ref: 'D22' },
+  { id: 'c5', x: 1258, y: 405, w: 220, h: 130, n: [7], title: '扫描器 → 浮现区', who: ['py'], tags: [['tmp', '暂行实现'], ['ask', '几处待确认']],
+    lines: ['按月分区扫描，按概率自己冒头', '浮现区 4 条；主动检索兜底'],
+    more: ['按设想文档公式 p = sigmoid((强度 + 启动加成 − 阈值) / 温度) 实现（scanner.py，待办 #9）', '暂定：启动加成用人物重合 + 关键词 BM25（不用嵌入模型）；概率按每分钟算，与扫描快慢脱钩；负面记忆话题无关时最多打 6 折；阈值 0.6、温度 0.15', '待确认：温度（专注 / 放空）由谁来调', '主动检索 search_memory：BM25 相关度 × 当前强度，只搜记忆系统', '还没接到后台时钟和回应模块'],
+    ref: '设想文档"记忆自己冒头" · 待办 #9 · scanner.py' },
+  { id: 'c6', x: 1258, y: 548, w: 220, h: 90, n: [7], title: '回忆加固', who: ['py'], tags: [['done', '记忆侧已完成'], ['tmp', '等回应调用']],
+    lines: ['真正用到时：强度回满 + 半衰期变长'],
+    more: ['H ← H × (1 + R × (1 − 当时强度))；快忘光时想起，半衰期最多翻倍（D20）', '记忆一侧已做（scanner.use_memory）；等回应模块调用（待办 #10）'],
+    ref: 'D20 · 遗忘曲线.md 第三节' },
+  { id: 'c7', x: 1258, y: 650, w: 220, h: 65, title: '夜间合并事件线', who: ['py', 'sub'], tags: [['done', '已完成'], ['tmp', '数值暂定']],
+    more: ['凌晨检查 7 天内新建的事件线，重复的合并（merge.py，待办 #8）', '把握低于 0.8 不合并；保留较早的那条，另一条标记 merged_into，不删除', '每次判断都记 merge_log', '待确认：合并时免竞争标记怎么继承'], ref: '待办 #8 · merge.py' },
+  { id: 'c8', x: 1258, y: 724, w: 220, h: 166, title: '全局参数 · 调参日志', who: ['py'], tags: [['done', '护栏、查看与回滚'], ['todo', '长期调整流程未做']],
+    lines: ['六个旋钮：基础半衰期、情绪放大、重要性放大、回忆加固、首尾加成、遗忘线', '潜意识窄幅、慢速地改，每次都记日志'],
+    more: ['小模型不能修改自身的调整上限（D8）', '待办 #12：全局参数的长期调整流程', '调参日志的查看与回滚：python -m memory.tuning_review（待办 #14 已完成；人工回滚是否受护栏限制待确认）'],
+    ref: 'D8 · tuning.py · 待办 #12 #14' },
+
+  // 记忆 · 时间与档案
+  { id: 'd1', x: 1525, y: 405, w: 265, h: 165, title: '记忆时钟', who: ['py'], tags: [['done', '已完成'], ['tmp', '数值暂定']],
+    lines: ['对话中：比现实快 10 倍', '停顿 25 分钟后：降为 0.01', '再过 24 小时：停止，直到再聊', '<b>不对话就不遗忘</b>'],
+    more: ['D21（用户定）：按对话产生的时间戳、以现实为标准，但流速更快', '遗忘曲线、常驻栏活跃度、画像牢固度都用它量"过了多久"', '智能体处理任务的时段也算活动（等行动模块，待办 #18）', '10 倍、25 分钟、24 小时是暂定值，先用着（D23）'],
+    ref: 'D21 · D23 · clock.py' },
+  { id: 'd2', x: 1525, y: 618, w: 265, h: 84, n: [9], title: '翻档案 · 找回', who: ['py'], tags: [['done', '记忆侧已完成'], ['ask', 'AI 能否自己翻']],
+    lines: ['用户要求时搜档案，找回的重新入海'],
+    more: ['search_archive：jieba + BM25 搜片段标题和原文；restore_segment：放回记忆系统，算回想一次（D25）', '暂定只在用户要求时翻；设想文档补充"AI 判断重要但记不清时也翻"待确认', '回应模块还没接入（"我找找"）'],
+    ref: 'D25 · archive.py · 待办 #11' },
+  { id: 'd3', x: 1525, y: 713, w: 265, h: 52, n: [10], kind: 'compact', title: '忘掉：用户二选一（D25）', who: ['py'], st: 'done',
+    more: ['没有信息是彻底忘掉的；用户要求忘掉时由用户选：存进档案，或彻底删除（D25）', '彻底删除连同只属于它的原文、只出自它的画像事实、相关日志一起删，只留一条不含内容的删除记录', '代码不替用户默认；问用户由回应模块做（未接入）'], ref: 'D25 · archive.py' },
+  { id: 'd4', x: 1525, y: 776, w: 265, h: 114, n: [8], title: '档案原文', who: ['py'], tags: [['done', '已完成']],
+    lines: ['消息原文永久保存', '批量遗忘的 95%、用户存进档案的、被覆盖的画像事实'],
+    more: ['遗忘不等于删除：没有信息是彻底忘掉的（D25）'], ref: 'D12 · D22 · D25' },
+
+  // 模型调用层
+  { id: 'm0', x: 15, y: 962, w: 330, h: 130, title: '统一接口 ChatModel', tags: [['done', '已完成']],
+    lines: ['各模块只依赖这个接口，不直接调某家 API', '只用标准库发 HTTP；失败一律抛 LLMError'], ref: 'D11 · contracts/llm.py' },
+  { id: 'm1', x: 360, y: 962, w: 380, h: 130, title: '思考模型 · 默认 DeepSeek', who: ['think'], tags: [['done', '接口已完成'], ['todo', '回应模块未接入']],
+    lines: ['deepseek-flash（API）', '给回应模块用；"思考"默认关闭'], ref: 'D9 · D11 · deepseek.py' },
+  { id: 'm2', x: 755, y: 962, w: 420, h: 130, title: '潜意识模型 · 默认本地 Qwen', who: ['sub'], tags: [['done', '已完成']],
+    lines: ['Qwen3.8-27B Q4，Ollama，RTX 3090；温度 0', '六个提示词：切段、归属、调参、摘要、画像矛盾、关键词'], ref: 'D9 · D11 · D12 · ollama.py · prompts.py' },
+  { id: 'm3', x: 1190, y: 962, w: 300, h: 130, title: '可以换成任何模型', tags: [['done', '已完成']],
+    lines: ['THINKING_PROVIDER / MODEL', 'SUBCONSCIOUS_PROVIDER / MODEL', '测试用 FakeModel，不联网'], ref: 'D13 · .env.example · fake.py' },
+  { id: 'm4', x: 1505, y: 962, w: 285, h: 130, title: 'Python 硬公式 / 规则', who: ['py'], tags: [['done', '已完成']],
+    lines: ['不调用模型：衰减、加固、抽样、阈值、护栏', '不使用嵌入模型（D10）'], ref: 'D10 · 代码规范' },
+];
+
+// 箭头：points 是折线顶点；todo 为虚线（还没接通）；label 放在 lx, ly
+const EDGES = [
+  { p: [[150, 195], [190, 195]], label: '消息', lx: 170, ly: 188 },
+  { p: [[190, 258], [150, 258]], label: '回复', lx: 170, ly: 251, todo: true },
+  { p: [[1510, 195], [1540, 195]], label: '调用', lx: 1525, ly: 188, todo: true },
+  { p: [[1540, 258], [1510, 258]], label: '结果', lx: 1525, ly: 251, todo: true },
+  { p: [[560, 310], [560, 405]], label: '每条消息（含 AI 回复）', lx: 566, ly: 331, anchor: 'start' },
+  { p: [[240, 385], [240, 310]], label: 'QuickMood', lx: 246, ly: 331, anchor: 'start', todo: true },
+  { p: [[1133, 405], [1133, 310]], label: '常驻栏（背景）', lx: 1127, ly: 331, anchor: 'end', todo: true },
+  { p: [[1368, 405], [1368, 310]], label: '浮现区 / 主动检索', lx: 1362, ly: 331, anchor: 'end', todo: true },
+  { p: [[1497, 310], [1497, 593], [1478, 593]], label: '使用回执', lx: 1491, ly: 331, anchor: 'end', todo: true },
+  { p: [[1506, 310], [1506, 660], [1525, 660]], label: '翻档案 / 忘掉', lx: 1512, ly: 331, anchor: 'start', todo: true },
+  { p: [[1506, 660], [1506, 739], [1525, 739]], todo: true, title: '用户要求忘掉：选存进档案或彻底删除' },
+  { p: [[1660, 310], [1660, 405]], label: '任务时段', lx: 1666, ly: 331, anchor: 'start', todo: true },
+  { p: [[590, 440], [615, 440]] },
+  { p: [[470, 530], [470, 545]] },
+  { p: [[285, 628], [603, 628], [603, 485], [615, 485]], label: '情绪分（暂由切段提示词代出）', lx: 312, ly: 641, anchor: 'start', todo: true },
+  { p: [[800, 505], [800, 520]] }, { p: [[800, 584], [800, 597]] }, { p: [[800, 661], [800, 674]] },
+  { p: [[705, 757], [705, 769]] }, { p: [[795, 789], [805, 789]] }, { p: [[895, 809], [895, 824]] },
+  { p: [[985, 430], [1004, 430], [1004, 760], [1023, 760]], title: '稳定事实 → 用户画像' },
+  { p: [[985, 789], [995, 789], [995, 470], [1023, 470]], title: '重排常驻栏' },
+  { p: [[985, 628], [1023, 628]], title: '挂上事件线' },
+  { p: [[985, 714], [1023, 690]], title: '调整旧记忆的系数' },
+  { p: [[985, 857], [1023, 857]], title: '随机 5%：只留关键词' },
+  { p: [[900, 890], [900, 914], [1655, 914], [1655, 888]], label: '95% 移进档案，不再出现在记忆系统里', lx: 1280, ly: 918 },
+];
+
+const LIFE = [
+  [1, '进来', '第一层规则分对话、标候选边界；原文立即存进档案', 'done'],
+  [2, '切段', '对话停顿时，潜意识模型确认片段、起标题、打情绪分、抽人物和稳定事实', 'done'],
+  [3, '挂上事件线', '五种来源筛出 ≤ 20 条候选 + 常驻栏，潜意识模型判断归属，更新摘要', 'done'],
+  [4, '回头改旧记忆', '潜意识模型调系数，Python 护栏限幅、记日志', 'done'],
+  [5, '常驻栏重排', '免竞争三类 + 竞争 20 名；常驻期间不遗忘', 'done'],
+  [6, '慢慢变淡', '强度按半衰期衰减，时间用记忆时钟量：不对话就不遗忘', 'done'],
+  [7, '自己冒头、被用到', '扫描器放进浮现区；思考模型真正用到时强度回满、半衰期变长（记忆侧已做，等回应）', 'tmp'],
+  [8, '被遗忘', '低于遗忘线攒够 20 条：19 条移进档案，随机 1 条只留关键词、重新开始遗忘曲线', 'done'],
+  [9, '被找回', '用户要求时搜档案，找回的重新入海，算回想一次（记忆侧已做，等回应）', 'tmp'],
+  [10, '被用户要求忘掉', '用户二选一：存进档案，或彻底删除；没有信息是自己彻底消失的（D25）', 'done'],
+];
+
+const IFACES = [
+  ['ChatModel 模型调用', '各模块 → 模型层', 'chat(消息, schema) → 解析好的结果；失败抛 LLMError', 'done'],
+  ['片段 / 对话 / 事件线 / 人物', '记忆（共用数据结构）', 'contracts/memory.py 里的数据类', 'done'],
+  ['EmotionScore 情绪评分', '情绪 → 记忆', '唤醒度、效价、重要性、理由', 'tmp', '暂由切段提示词输出'],
+  ['QuickMood 实时粗略情绪', '情绪 → 回应', '每条消息一个，字段待定', 'todo'],
+  ['常驻栏 resident_block', '记忆 → 回应', '用户画像 + 常驻事件线的一段背景文字', 'tmp', '记忆侧已有，回应未接入'],
+  ['SurfacedMemory 浮现内容', '记忆 → 回应', '内容或残影、清晰度、效价', 'tmp', '记忆侧有浮现区，回应未接入'],
+  ['记忆使用回执 use_memory', '回应 → 记忆', '真正用到某条记忆时回报，用来加固', 'tmp', '记忆侧已有，等回应调用'],
+  ['任务时段 add_busy_span', '行动 → 记忆', '任务开始、结束时间，记忆时钟照常流动', 'tmp', '记忆侧已有，格式待行动确认'],
+  ['检索 / 翻档案', '回应 → 记忆', 'search_memory 主动检索；search_archive / restore_segment 翻档案、找回', 'tmp', '记忆侧已有，接口约定待定'],
+  ['忘掉 forget_thread', '回应 → 记忆', '用户选"存进档案"或"彻底删除"', 'tmp', '记忆侧已有，回应未接入'],
+  ['后台调度 tick', '后台时钟 → 记忆', '启动、停顿后整理、夜间合并', 'ask', '后台时钟归谁待定'],
+  ['行动记录', '行动 → 记忆', '做过什么、结果如何', 'todo', '格式待定'],
+  ['情绪状态', '情绪 → 回应', '要不要给出更长期的心情状态', 'ask', '待定'],
+];
+
+const OPEN = [
+  ['1. AI 能不能自己翻档案？暂定只在用户要求时翻', '待你确认 · 一'],
+  ['2. 聊得少但过了很多天，要不要也启动？暂定只看 70%', '待你确认 · 一'],
+  ['3. 思考模型的上下文上限：暂定 128000 token，请按实际模型核实', '待你确认 · 一'],
+  ['4. 扫描器几处做法：启动加成、按每分钟算概率、负面打折、浮现区 4 条；温度由谁调', '待你确认 · 一'],
+  ['5. 夜间合并时免竞争标记怎么继承', '待你确认 · 一'],
+  ['6. 人工回滚调参要不要也受护栏限制', '待你确认 · 一'],
+  ['7. 情绪打分和情绪基线归记忆模块还是情绪模块', '待你确认 · 三（边界问题）'],
+  ['8. 后台时钟归谁（现在记忆模块自带 runner.tick）', '待你确认 · 三（边界问题）'],
+  ['9. 生命周期是全局的，还是只属于记忆', '待你确认 · 三（边界问题）'],
+  ['10. 愿景、代码规范两份草案是否认可', '待你确认 · 三'],
+  ['另有一批暂定数值（切段每批 6000 token、停顿 25 分钟整理、凌晨 3 点合并等），可以先用着', '待你确认 · 二'],
+];
+
+// ────────────────────────────── 绘制 ──────────────────────────────
+const SVG = 'http://www.w3.org/2000/svg';
+const svg = document.getElementById('map');
+const el = (tag, attrs = {}, parent = svg) => {
+  const n = document.createElementNS(SVG, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  parent.appendChild(n);
+  return n;
+};
+const h = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
+const tagHtml = ([s, t]) => `<span class="tag ${s}">${t}</span>`;
+const whoHtml = (who, short) => (who || []).map(w => `<span title="${WHO[w]}"><i class="dot" style="background:var(--${w})"></i>${short ? '' : WHO[w]}</span>`).join('');
+const numHtml = n => (n || []).map(i => `<span class="num">${i}</span>`).join('');
+
+const defs = el('defs');
+const marker = el('marker', { id: 'arr', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: 'auto-start-reverse' }, defs);
+el('path', { d: 'M0,0 L10,5 L0,10 z', style: 'fill: var(--arrow)' }, marker);
+
+for (const z of ZONES) {
+  el('rect', { x: z.x, y: z.y, width: z.w, height: z.h, rx: 12, style: `fill:${z.fill}; stroke: var(--border)` + (z.inner ? '; stroke-dasharray: 3 3' : '') });
+  const t = el('text', { x: z.x + 14, y: z.y + (z.inner ? 18 : 22), class: 'zone-label' });
+  t.textContent = z.label;
+  if (z.sub) { const s = el('tspan', { class: 'col-label', dx: 10 }, t); s.textContent = z.sub; }
+}
+for (const c of COLS) { const t = el('text', { x: c.x, y: c.y, class: 'col-label' }); t.textContent = c.t; }
+
+const tip = document.getElementById('tip');
+function showTip(e, b) {
+  const items = [...(b.lines || []), ...(b.more || [])];
+  tip.innerHTML = `<h4>${b.title}</h4>` + (b.tags ? `<div style="margin-bottom:4px">${b.tags.map(tagHtml).join(' ')}</div>` : '') +
+    (items.length ? `<ul>${items.map(x => `<li>${x}</li>`).join('')}</ul>` : '') + (b.ref ? `<div class="ref">出处：${b.ref}</div>` : '');
+  tip.style.display = 'block';
+  moveTip(e);
+}
+function moveTip(e) {
+  const r = tip.getBoundingClientRect();
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = Math.max(8, innerHeight - r.height - 8);
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+}
+
+function govStrip() {
+  const d = h('div', 'strip');
+  d.innerHTML = `<b>总纲 · 00-总纲</b><span>协调、接口、决策（只有总纲对话能改接口）</span>` +
+    [['愿景', '草案 · 待确认', 'ask'], ['架构总图', '草案 · 待确认', 'ask'], ['接口约定', '草案', 'ask'], ['术语表', '', 'done'],
+     ['决策日志', 'D1～D25', 'done'], ['待你确认', '10 问', 'ask'], ['偏离记录', '#1～#16', 'done'], ['待办', '', 'done'], ['代码规范', '草案 · 待确认', 'ask']]
+      .map(([n, s, st]) => `<span class="chip" style="border-color:color-mix(in srgb, var(--${st}) 45%, transparent)">${n}${s ? ` <small>${s}</small>` : ''}</span>`).join('') +
+    `<span style="margin-left:auto">${tagHtml(['done', '多对话协作框架已搭好'])}</span>`;
+  return d;
+}
+function lifeStrip() {
+  const d = h('div', 'strip');
+  d.innerHTML = `<b>生命周期</b>
+    <div class="stage"><b>熟悉期</b>：不启动记忆系统，在上下文限制内正常聊天；原文照常实时存档</div><span class="chev">›</span>
+    <div class="stage"><b>启动</b>（D24）：思考模型上下文用到约 70% 时，一次性整理熟悉期全部对话、建立概率海，整理完强度满格；"跨越很多天也启动"待确认</div><span class="chev">›</span>
+    <div class="stage"><b>运行期</b>：遗忘、浮现、整理循环（下图主体）</div>
+    <div style="display:flex;flex-direction:column;gap:2px">${tagHtml(['done', '已完成（D24）'])}${tagHtml(['tmp', '算基线等情绪模块'])}${tagHtml(['ask', '是否全局、上下文上限待定'])}</div>`;
+  return d;
+}
+
+for (const b of BOXES) {
+  const fo = el('foreignObject', { x: b.x, y: b.y, width: b.w, height: b.h });
+  let div;
+  if (b.kind === 'strip') div = govStrip();
+  else if (b.kind === 'life') div = lifeStrip();
+  else {
+    const st = b.st || (b.tags ? b.tags[0][0] : 'done');
+    div = h('div', `box ${st} ${b.cls || ''} ${b.kind === 'compact' ? 'compact' : ''}`);
+    div.style.setProperty('--st', `var(--${st})`);
+    if (b.tint) div.style.background = `linear-gradient(${b.tint}, ${b.tint}), var(--surface)`;
+    if (b.kind === 'compact') {
+      div.innerHTML = numHtml(b.n) + `<span class="t">${b.title}</span><span class="who">${whoHtml(b.who, true)}</span>`;
+    } else {
+      div.innerHTML = `<div class="hd">${numHtml(b.n)}<span class="t">${b.title}</span><span class="who">${whoHtml(b.who, (b.who || []).length > 1 || b.w <= 240)}</span></div>` +
+        (b.tags ? `<div class="tags">${b.tags.map(tagHtml).join('')}</div>` : '') +
+        (b.lines ? `<ul class="lines">${b.lines.map(x => `<li>${x}</li>`).join('')}</ul>` : '') +
+        (b.ref ? `<div class="ref">${b.ref}</div>` : '');
+    }
+    div.addEventListener('mouseenter', e => showTip(e, b));
+    div.addEventListener('mousemove', moveTip);
+    div.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+  }
+  div.dataset.id = b.id;
+  fo.appendChild(div);
+}
+
+for (const e of EDGES) {
+  const g = el('g');
+  const path = el('polyline', { points: e.p.map(p => p.join(',')).join(' '), class: 'edge' + (e.todo ? ' todo' : ''), 'marker-end': 'url(#arr)' }, g);
+  if (e.title) { const t = el('title', {}, path); t.textContent = e.title; }
+  if (e.label) {
+    const t = el('text', { x: e.lx, y: e.ly, class: 'alabel', 'text-anchor': e.anchor || 'middle', 'dominant-baseline': 'middle' }, g);
+    t.textContent = e.label;
+  }
+}
+
+// 下方三栏
+document.getElementById('life').innerHTML = LIFE.map(([n, t, d, s]) =>
+  `<li><span class="num">${n}</span><div class="what"><b>${t}</b><span>${d}</span></div>${tagHtml([s, ST[s]])}</li>`).join('');
+document.querySelector('#ifaces tbody').innerHTML = IFACES.map(([n, dir, what, s, note]) =>
+  `<tr><td>${n}</td><td class="dir">${dir}</td><td class="cn">${what}</td><td>${tagHtml([s, note || ST[s]])}</td></tr>`).join('');
+document.getElementById('open').innerHTML = OPEN.map(([q, src]) => `<li>${q}<div class="src">${src}</div></li>`).join('');
+</script>
+</body>
+</html>

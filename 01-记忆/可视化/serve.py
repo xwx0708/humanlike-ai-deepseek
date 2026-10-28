@@ -1,13 +1,18 @@
 """记忆可视化的本地服务器：提供本文件夹里的静态文件，文件一有改动，所有打开的页面自动刷新。
 
 用法：python serve.py [端口]，默认 8790。只用标准库。
+另有只读的 JSON 接口 /api/memory、/api/docs，见 api.py。
 """
 
 import http.server
+import json
 import sys
 import threading
 import time
 from pathlib import Path
+
+sys.dont_write_bytecode = True  # 不在本文件夹写 __pycache__，否则会触发页面刷新
+import api  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8790
@@ -66,8 +71,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/__reload":
             return self._stream_reload()
+        if path in ("/api/memory", "/api/docs"):
+            return self._send_json(api.memory_snapshot if path == "/api/memory" else api.docs_snapshot)
         if path == "/":
-            path = "/demo.html"
+            path = "/overview.html"
         if path.endswith(".html"):
             return self._send_html(path)
         super().do_GET()
@@ -83,6 +90,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             body += RELOAD_SNIPPET
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_json(self, make) -> None:
+        try:
+            body = json.dumps(make(), ensure_ascii=False, default=str).encode()
+            code = 200
+        except Exception as e:  # 接口出错不影响静态页面和自动刷新
+            body = json.dumps({"error": f"{type(e).__name__}: {e}"}, ensure_ascii=False).encode()
+            code = 500
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

@@ -23,10 +23,15 @@
 
 | 文件 | 作用 |
 |---|---|
-| `forgetting.html` | 遗忘曲线：可以拖动旋钮，看各种情绪强度下的曲线和回忆加固（默认页面） |
+| `overview.html` | 总流程表：整个体系的架构（四个模块 + 总纲 + 模型调用层、记忆内部三层、一条消息的一生 ①～⑩、模块接口、等你拍板的问题），每个方块标状态。状态数据写在页面脚本里，文档更新后要同步改 |
+| `progress.html` | 全部工作：实时读取 00-总纲 的决策日志、偏离记录、待办、待你确认，以及测试数量（pytest 只收集不运行）和 git 提交记录；每 20 秒检查一次 |
+| `forgetting.html` | 遗忘曲线：可以拖动旋钮，看各种情绪强度下的曲线和回忆加固（副屏默认页面） |
 | `pipeline.html` | 工作流程：每一步谁来做（DeepSeek / Qwen / Python / 情绪模块）、什么时候做、实现到哪一步 |
 | `demo.html` | 概率海 3D 演示（假数据） |
-| `serve.py` | 带自动刷新的本地服务器 |
+| `live.html` | 实时数据：只读打开 `data/memory.db`，显示片段强度（按记忆时钟）、事件线、常驻栏、画像、调参日志；每 5 秒刷新 |
+| `nav.js` | 各页共用的顶部导航和亮色 / 暗色切换 |
+| `serve.py` | 带自动刷新的本地服务器；根路径打开 `overview.html` |
+| `api.py` | 只读 JSON 接口 `/api/memory`、`/api/docs`（serve.py 调用）。数据库用 sqlite 的 `mode=ro` 打开，不会修改；环境变量 `MEMORY_DB` 可以指向别的库 |
 | `open_on_second_screen.py`、`打开副屏.bat` | 启动服务器，并在副屏打开窗口 |
 | `make_shortcut.py` | 在桌面创建「记忆可视化」快捷方式；快捷方式丢了就再运行一次 |
 | `vendor/` | 第三方库 3d-force-graph，来源见其中的 README |

@@ -555,3 +555,36 @@ def parse_keywords(data: dict[str, Any], ids: list[int]) -> dict[int, list[str]]
         if i in valid and words:
             out[i] = list(dict.fromkeys(words))[:4]
     return out
+
+
+# ====================================================================================
+# 七、一场对话的摘要：随子片段遗忘重新概括（事件切分.md"遗忘效果"；待办 #7）
+# ====================================================================================
+
+CONVERSATION_SYSTEM = """你是一个聊天 AI 的"潜意识"。请用一句话概括它和用户的一场聊天。
+
+## 规则
+- 不超过 40 个字，用第三人称"他"指用户，例如"那晚从他妈妈住院一直聊到他想换工作"。
+- 给你的是这场聊天里**现在还记得**的部分：完整的片段标题，或者只剩几个关键词的模糊片段。
+- 记得的越少，概括越抽象、越模糊；只剩关键词时，只写出大概，不要补出细节，不要编造。
+
+只输出 JSON。"""
+
+CONVERSATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}},
+    "required": ["summary"],
+}
+
+
+def build_conversation_prompt(date: str, parts: list[str]) -> list[Message]:
+    """parts：还记得的片段，按时间顺序；只剩关键词的以"（模糊）"开头。"""
+    body = "\n".join(f"- {p}" for p in parts)
+    return [system(CONVERSATION_SYSTEM), user(f"日期：{date}\n还记得的部分：\n{body}")]
+
+
+def parse_conversation(data: dict[str, Any]) -> str:
+    summary = str(data.get("summary", "")).strip()
+    if not summary:
+        raise ValueError("潜意识模型没有给出对话摘要")
+    return summary[:80]

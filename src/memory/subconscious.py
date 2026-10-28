@@ -4,10 +4,11 @@
 """
 
 import random
+import time
 from dataclasses import dataclass, field, replace
 
 from contracts.llm import ChatModel
-from contracts.memory import Segment, days
+from contracts.memory import ChatTurn, Segment, days
 from memory.boundaries import conversation_closed
 from memory.candidates import select_candidates
 from memory.clock import MemoryClock, clock_of
@@ -15,6 +16,7 @@ from memory.forgetting import clamp_adjustment, initial_half_life, relative_arou
 from memory.profile import EVOKE, OVERWRITE, resolve_conflict
 from memory.prompts import (
     CONFLICT_SCHEMA,
+    CONVERSATION_SCHEMA,
     SEGMENT_SCHEMA,
     SUMMARY_SCHEMA,
     THREAD_SCHEMA,
@@ -23,11 +25,13 @@ from memory.prompts import (
     MemoryCard,
     ThreadDecision,
     build_conflict_prompt,
+    build_conversation_prompt,
     build_segment_prompt,
     build_summary_prompt,
     build_thread_prompt,
     build_tuning_prompt,
     parse_conflicts,
+    parse_conversation,
     parse_segments,
     parse_summary,
     parse_thread,
@@ -36,6 +40,7 @@ from memory.prompts import (
 from memory.resident import ResidentReport, effective_strength, refresh_residents
 from memory.store import MemoryStore
 from memory.sweep import SweepReport, sweep
+from memory.tokens import estimate_tokens
 from memory.tuning import GlobalChange, adjust_global
 
 
@@ -56,58 +61,63 @@ def consolidate(
     conversation_id: int,
     now_ts: float,
     rng: random.Random | None = None,
+    sweep_forgotten: bool = True,
 ) -> ConsolidationReport:
-    """rng：画像矛盾时掷骰子、批量遗忘时随机挑留下的 5% 用；测试时传入固定种子的 random.Random 以便复现。"""
+    """rng：画像矛盾时掷骰子、批量遗忘时随机挑留下的 5% 用；测试时传入固定种子的 random.Random 以便复现。
+    sweep_forgotten：最后是否批量遗忘；启动时补整理熟悉期的对话，不该在中途遗忘（D24）。"""
     rng = rng or random.Random()
     report = ConsolidationReport()
     turns = store.unsegmented_turns(conversation_id)
     if not turns:
         _mark_last_segment(store, conversation_id, now_ts)  # 已经切完的对话，结束后也要补标末个片段
+        _summarize_if_closed(store, model, conversation_id, now_ts)
         return report
     knobs = store.load_global_knobs()
     earlier = store.segments(conversation_id)
-    previous_title = earlier[-1].title if earlier else None
-
-    # 1. 切段第二层
-    reply = model.chat(
-        build_segment_prompt(turns, store.boundaries(conversation_id), previous_title),
-        schema=SEGMENT_SCHEMA,
-        temperature=0.2,
-    )
-    drafts = parse_segments(reply.data, turns)
-    ts_of = {t.id: t.ts for t in turns}
     prev = earlier[-1] if earlier else None
-    for i, d in enumerate(drafts):
-        person_ids = [store.upsert_person(name, aliases) for name, aliases in d.people]
-        # 暂行：情绪基线还没实现，先按基线 0 计算相对唤醒度
-        rel = relative_arousal(d.emotion.arousal, baseline=0.0)
-        at_edge = not earlier and i == 0  # 首个片段；末个片段要等对话结束时才知道，见 _mark_last_segment
-        seg = store.add_segment(
-            Segment(
-                None,
-                conversation_id,
-                d.title,
-                min(ts_of[t] for t in d.turn_ids),
-                max(ts_of[t] for t in d.turn_ids),
-                d.turn_ids,
-                person_ids,
-                d.emotion,
-                half_life=initial_half_life(rel, d.emotion.importance, knobs, at_edge=at_edge),
-                last_recall_ts=max(ts_of[t] for t in d.turn_ids),
-                at_edge=at_edge,
-                remember_requested=d.remember_requested,
-            )
+    boundaries = store.boundaries(conversation_id)
+
+    # 1. 切段第二层。长对话分批，每批不超过潜意识模型能看的长度（待办 #4）
+    for batch in split_turns(turns, boundaries):
+        reply = model.chat(
+            build_segment_prompt(batch, boundaries, prev.title if prev else None),
+            schema=SEGMENT_SCHEMA,
+            temperature=0.2,
         )
-        if prev is not None:
-            store.link_segments(prev.id, seg.id, "next")
-        prev = seg
-        report.segment_ids.append(seg.id)
-        for about, category, fact in d.facts:  # 稳定事实进用户画像：原文不改写、不遗忘
-            person = None if about in ("用户", "我", "他", "她") else store.upsert_person(about)
-            before = {f.id: f for f in store.profile(person) if f.category == category}
-            fid = store.add_profile_fact(person, category, fact, seg.end_ts, seg.id)
-            if fid not in before and before:  # 是新事实，且同一个人同一类已有旧事实：检查矛盾
-                _handle_conflicts(store, model, rng, fid, fact, about, before, now_ts, report)
+        drafts = parse_segments(reply.data, batch)
+        ts_of = {t.id: t.ts for t in batch}
+        for i, d in enumerate(drafts):
+            person_ids = [store.upsert_person(name, aliases) for name, aliases in d.people]
+            # 暂行：情绪基线还没实现，先按基线 0 计算相对唤醒度
+            rel = relative_arousal(d.emotion.arousal, baseline=0.0)
+            # 整场对话的首个片段；末个片段要等对话结束时才知道，见 _mark_last_segment
+            at_edge = prev is None and i == 0
+            seg = store.add_segment(
+                Segment(
+                    None,
+                    conversation_id,
+                    d.title,
+                    min(ts_of[t] for t in d.turn_ids),
+                    max(ts_of[t] for t in d.turn_ids),
+                    d.turn_ids,
+                    person_ids,
+                    d.emotion,
+                    half_life=initial_half_life(rel, d.emotion.importance, knobs, at_edge=at_edge),
+                    last_recall_ts=max(ts_of[t] for t in d.turn_ids),
+                    at_edge=at_edge,
+                    remember_requested=d.remember_requested,
+                )
+            )
+            if prev is not None:
+                store.link_segments(prev.id, seg.id, "next")
+            prev = seg
+            report.segment_ids.append(seg.id)
+            for about, category, fact in d.facts:  # 稳定事实进用户画像：原文不改写、不遗忘
+                person = None if about in ("用户", "我", "他", "她") else store.upsert_person(about)
+                before = {f.id: f for f in store.profile(person) if f.category == category}
+                fid = store.add_profile_fact(person, category, fact, seg.end_ts, seg.id)
+                if fid not in before and before:  # 是新事实，且同一个人同一类已有旧事实：检查矛盾
+                    _handle_conflicts(store, model, rng, fid, fact, about, before, now_ts, report)
 
     # 2. 挂到事件线
     for sid in report.segment_ids:
@@ -136,7 +146,7 @@ def consolidate(
             for tid in targets:
                 store.relate_threads(tid, rid, decision.reason)
         for tid in decision.attach_to:  # 挂到已有的线上：更新这条线的摘要（新建的线摘要就是这个片段的标题）
-            _update_summary(store, model, tid)
+            update_summary(store, model, tid)
         report.threads[sid] = decision
 
     # 3. 修改参数：拿新片段所在事件线上的旧片段给潜意识模型看
@@ -174,9 +184,40 @@ def consolidate(
         knobs = store.load_global_knobs()
 
     _mark_last_segment(store, conversation_id, now_ts)
+    _summarize_if_closed(store, model, conversation_id, now_ts)
     report.residents = refresh_residents(store, now_ts)  # 新片段、新事实可能改变常驻栏（D17）
-    report.sweep = sweep(store, model, now_ts, rng=rng)  # 已遗忘的攒够了就批量清理（D22）
+    if sweep_forgotten:
+        report.sweep = sweep(store, model, now_ts, rng=rng)
+        if report.sweep:  # 有片段被遗忘：它们所在的对话，摘要重新概括、更抽象一层
+            gone = set(report.sweep.archived) | {int(i) for i in report.sweep.kept}
+            for cid in sorted({store.get_segment(i).conversation_id for i in gone}):
+                summarize_conversation(store, model, cid)  # 已遗忘的攒够了就批量清理（D22）
     return report
+
+
+SEGMENT_BUDGET = 6000  # 每批消息最多占多少 token（暂定）。Qwen 上下文 16384，要给提示词和输出留余量
+
+
+def split_turns(
+    turns: list[ChatTurn], boundaries: dict[int, list[str]], budget: int = SEGMENT_BUDGET
+) -> list[list[ChatTurn]]:
+    """把消息分成几批，每批不超过 budget。超出时尽量在这一批后半段最后一个候选边界前切开，
+    让一个话题不被拦腰切断；后半段没有候选边界就直接在超出处切。"""
+    batches, cur, used = [], [], 0
+    for t in turns:
+        cost = estimate_tokens(t.content) + 12  # 12：编号、时间、角色等
+        if cur and used + cost > budget:
+            cut = next(
+                (i for i in range(len(cur) - 1, len(cur) // 2, -1) if cur[i].id in boundaries), len(cur)
+            )
+            batches.append(cur[:cut])
+            cur = cur[cut:]
+            used = sum(estimate_tokens(x.content) + 12 for x in cur)
+        cur.append(t)
+        used += cost
+    if cur:
+        batches.append(cur)
+    return batches
 
 
 def _handle_conflicts(store, model, rng, new_id, new_fact, about, olds, now_ts, report) -> None:
@@ -213,7 +254,28 @@ def _mark_last_segment(store: MemoryStore, conversation_id: int, now_ts: float) 
     store.save_segment_state(last)
 
 
-def _update_summary(store: MemoryStore, model: ChatModel, thread_id: int) -> None:
+def _summarize_if_closed(store: MemoryStore, model: ChatModel, cid: int, now_ts: float) -> None:
+    """对话结束后概括一次：一场对话本身也是一条记忆（待办 #7）。"""
+    if conversation_closed(store, cid, now_ts) and not store.get_conversation(cid).summary:
+        summarize_conversation(store, model, cid)
+
+
+def summarize_conversation(store: MemoryStore, model: ChatModel, cid: int) -> None:
+    """按这场对话里现在还记得的片段（完整标题或只剩关键词）重新概括。全部被遗忘时不再改动：
+    这时的摘要本身就是这场对话留下的残影（事件切分.md"遗忘效果"）。"""
+    parts = [
+        s.title if s.state == "active" else f"（模糊）{s.trace}"
+        for s in store.segments(cid)
+        if s.state != "archived"
+    ]
+    if not parts:
+        return
+    date = time.strftime("%Y-%m-%d", time.localtime(store.get_conversation(cid).start_ts))
+    r = model.chat(build_conversation_prompt(date, parts), schema=CONVERSATION_SCHEMA, temperature=0)
+    store.set_conversation_summary(cid, parse_conversation(r.data))
+
+
+def update_summary(store: MemoryStore, model: ChatModel, thread_id: int) -> None:
     t = store.get_thread(thread_id)
     history = [  # 最近 10 个片段就够概括来龙去脉；移进档案的不算，抽象化的只给关键词（D22）
         s if s.state == "active" else replace(s, title=f"（只剩关键词）{s.trace}")

@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>全部工作</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f7f7f4; --surface: #ffffff; --ink: #121212; --ink-2: #4a4945; --muted: #85837c;
+    --grid: #e6e5df; --border: rgba(11,11,11,.13);
+    --done: #12925f; --done-bg: rgba(18,146,95,.10);
+    --tmp: #c27c00; --tmp-bg: rgba(237,161,0,.14);
+    --todo: #8a8880; --todo-bg: rgba(138,136,128,.10);
+    --ask: #7c4ddb; --ask-bg: rgba(124,77,219,.10);
+    --user: #d14d72; --user-bg: rgba(209,77,114,.10);
+    --gov: #2a78d6; --gov-bg: rgba(42,120,214,.10);
+    --bar: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0e0e0e; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8d86;
+      --grid: #2c2c2a; --border: rgba(255,255,255,.13);
+      --done: #2fbf86; --done-bg: rgba(47,191,134,.14);
+      --tmp: #e5a920; --tmp-bg: rgba(229,169,32,.15);
+      --todo: #8f8d86; --todo-bg: rgba(143,141,134,.12);
+      --ask: #a888f0; --ask-bg: rgba(168,136,240,.16);
+      --user: #ec7a9a; --user-bg: rgba(236,122,154,.14);
+      --gov: #4a94ec; --gov-bg: rgba(74,148,236,.14);
+      --bar: #4a94ec;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0e0e0e; --surface: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #8f8d86;
+    --grid: #2c2c2a; --border: rgba(255,255,255,.13);
+    --done: #2fbf86; --done-bg: rgba(47,191,134,.14);
+    --tmp: #e5a920; --tmp-bg: rgba(229,169,32,.15);
+    --todo: #8f8d86; --todo-bg: rgba(143,141,134,.12);
+    --ask: #a888f0; --ask-bg: rgba(168,136,240,.16);
+    --user: #ec7a9a; --user-bg: rgba(236,122,154,.14);
+    --gov: #4a94ec; --gov-bg: rgba(74,148,236,.14);
+    --bar: #4a94ec;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink);
+         font: 13px/1.55 "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", system-ui, sans-serif; }
+  main { max-width: 1880px; margin: 0 auto; padding: 12px 16px 28px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 20px; margin-bottom: 10px; }
+  h1 { font-size: 20px; margin: 0; }
+  .sub { color: var(--ink-2); }
+  #status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+  .kpi .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .kpi .l { color: var(--ink-2); font-size: 12px; }
+  .kpi .d { color: var(--muted); font-size: 11.5px; }
+  .grid { display: grid; grid-template-columns: 1.15fr 1fr 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 1400px) { .grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .stack { display: grid; gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px 12px; min-width: 0; }
+  .card h2 { font-size: 15px; margin: 0 0 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .card h2 small { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .card.hl { border: 2px solid var(--ask); box-shadow: 0 0 0 4px var(--ask-bg); }
+  .card.hl h2 { color: var(--ask); }
+  .tag { display: inline-block; font-size: 11px; line-height: 17px; padding: 0 7px; border-radius: 999px; white-space: nowrap;
+         color: var(--c); background: var(--bg); border: 1px solid color-mix(in srgb, var(--c) 35%, transparent); }
+  .tag.done { --c: var(--done); --bg: var(--done-bg); }
+  .tag.tmp  { --c: var(--tmp);  --bg: var(--tmp-bg); }
+  .tag.todo { --c: var(--todo); --bg: var(--todo-bg); }
+  .tag.ask  { --c: var(--ask);  --bg: var(--ask-bg); }
+  .tag.user { --c: var(--user); --bg: var(--user-bg); }
+  .tag.gov  { --c: var(--gov);  --bg: var(--gov-bg); }
+  .tag.none { --c: var(--muted); --bg: transparent; }
+
+  /* 决策时间线 */
+  .tl { position: relative; margin: 0; padding: 0 0 0 16px; list-style: none; }
+  .tl::before { content: ""; position: absolute; left: 5px; top: 4px; bottom: 4px; width: 2px; background: var(--grid); }
+  .tl .day { margin: 8px 0 4px -16px; color: var(--muted); font-size: 12px; font-weight: 600; }
+  .tl li.d { position: relative; padding: 4px 0 5px; border-bottom: 1px dashed var(--grid); }
+  .tl li.d::before { content: ""; position: absolute; left: -15px; top: 10px; width: 8px; height: 8px; border-radius: 50%;
+                     background: var(--c, var(--gov)); }
+  .tl .row { display: flex; gap: 8px; align-items: baseline; }
+  .tl .id { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 30px; }
+  .tl .t { font-weight: 600; }
+  .tl .one { color: var(--ink-2); font-size: 12.5px; }
+  .tl .row .tag { margin-left: auto; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  details .body { color: var(--ink-2); font-size: 12px; white-space: pre-wrap; margin: 4px 0 2px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; white-space: nowrap; }
+  td.n { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+  tr.struck td { color: var(--muted); }
+  tr.struck td .what { text-decoration: line-through; }
+  ul.plain { margin: 0; padding-left: 18px; }
+  ul.plain li { margin: 2px 0; }
+  ul.plain li.struck { color: var(--muted); }
+  ul.plain li.struck .what { text-decoration: line-through; }
+  .md h3 { font-size: 13.5px; margin: 10px 0 4px; }
+  .md ol, .md ul { margin: 2px 0 6px; padding-left: 20px; }
+  .md li { margin: 3px 0; }
+  .md ol > li { margin-bottom: 6px; }
+  .md li > ul { color: var(--ink-2); }
+  .md p { margin: 4px 0; color: var(--ink-2); }
+  .md blockquote { margin: 0 0 6px; padding: 4px 10px; border-left: 3px solid var(--ask); color: var(--ink-2); background: var(--ask-bg); border-radius: 0 6px 6px 0; }
+  code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; background: var(--grid); padding: 0 4px; border-radius: 4px; }
+  .bars { display: grid; grid-template-columns: auto 1fr auto; gap: 3px 8px; align-items: center; font-size: 12px; }
+  .bars .name { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 230px; }
+  .bars .track { height: 9px; background: var(--grid); border-radius: 5px; overflow: hidden; }
+  .bars .fill { height: 100%; background: var(--bar); border-radius: 5px; }
+  .bars .fill.live { background: var(--tmp); }
+  .bars .v { font-variant-numeric: tabular-nums; color: var(--ink-2); text-align: right; }
+  .commits { list-style: none; margin: 0; padding: 0; max-height: 520px; overflow: auto; }
+  .commits li { display: grid; grid-template-columns: 92px 1fr; gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--grid); font-size: 12px; }
+  .commits .when { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .commits .area { font-weight: 600; }
+  .muted { color: var(--muted); }
+  #dev table { table-layout: fixed; }
+  #dev th:nth-child(1) { width: 28px; } #dev th:nth-child(2) { width: 30%; } #dev th:nth-child(4) { width: 24%; }
+  #dev .tag { white-space: normal; border-radius: 8px; }
+  .card td { overflow-wrap: anywhere; }
+  .err { color: var(--tmp); background: var(--tmp-bg); padding: 10px 14px; border-radius: 10px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <nav class="sitenav"></nav><script src="nav.js"></script>
+  <header>
+    <h1>迄今为止的全部工作</h1>
+    <span class="sub">直接读取 00-总纲 里的文档、pytest 收集结果和 git 提交记录，文档一改，本页最多 20 秒后自动更新。</span>
+    <span id="status">读取中…</span>
+  </header>
+  <div id="err"></div>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="grid">
+    <div class="stack">
+      <section class="card hl" id="confirm-card">
+        <h2>待你确认<small>00-总纲/待你确认.md · 需要你拍板的事都在这里</small></h2>
+        <div class="md" id="confirm"></div>
+      </section>
+      <section class="card">
+        <h2>待办<small>00-总纲/待办.md</small></h2>
+        <div id="todo"></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>决策时间线<small>00-总纲/决策日志.md · 点开看原文</small></h2>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+        <span class="tag user">用户定</span><span class="tag gov">总纲定</span><span class="tag none">日志未写明</span>
+        <span class="muted" style="font-size:12px">按决策日志里"用户定 / 用户的要求 / 用户的计划 / 用户的原始设想"等原话标注</span>
+      </div>
+      <ol class="tl" id="decisions"></ol>
+    </section>
+
+    <div class="stack">
+      <section class="card">
+        <h2>偏离记录<small>00-总纲/偏离记录.md</small></h2>
+        <div id="dev"></div>
+      </section>
+      <section class="card">
+        <h2>已完成<small>待办.md"已完成"一节 + 一里划掉的</small></h2>
+        <ul class="plain" id="done"></ul>
+      </section>
+      <section class="card">
+        <h2>测试<small>pytest --collect-only（只收集，不运行）</small></h2>
+        <div id="tests"></div>
+      </section>
+      <section class="card">
+        <h2>提交记录<small>git log</small></h2>
+        <ul class="commits" id="commits"></ul>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script>
+// 决策的一句话概括和"谁定的"：D1～D25 由人读决策日志后整理；以后新增的决策自动取标题，
+// 标题括号里写了"用户定"就标用户定，否则标总纲定。
+const CURATED = {
+  1: ['不靠更长的上下文追求像人：上下文只作"当下"的工作区，长期记忆另建', 'user'],
+  2: ['记忆架构第三版：思考模型自己主动检索，潜意识只维护记忆库', 'user'],
+  3: ['每个模块一个对话，协调全靠共享文件，接口只由总纲改', 'none'],
+  4: ['所有对话都能读全部文件，只能改自己的区域', 'user'],
+  5: ['代码规范由总纲起草，用户确认后执行', 'user'],
+  6: ['事件切分采用用户方案：规则标候选 → 小模型确认 → 连成事件线；片段 / 对话 / 事件线三层', 'user'],
+  7: ['潜意识负责切段和改参数；只改参数，不改公式，调整都限幅、记日志', 'user'],
+  8: ['全局参数也由潜意识改：单次 ±10%、范围 1/1.5～1.5 倍、间隔 7 天、都记日志', 'user'],
+  9: ['思考模型用 DeepSeek API，潜意识用本地 Qwen3.8-27B（RTX 3090）', 'none'],
+  10: ['不用嵌入模型：语义判断交给 Qwen，数值计算交给硬公式', 'user'],
+  11: ['所有模型调用经统一接口 ChatModel；两种模型的"思考"默认关闭', 'gov'],
+  12: ['存储用 SQLite，原文永久保存即档案；潜意识三个提示词落地，输出一律经校验', 'gov'],
+  13: ['思考模型和潜意识模型都可以换成任何模型，由配置决定', 'user'],
+  14: ['切段第一层规则（30 分钟、语言信号、30 条 / 60 分钟）与事件线摘要更新', 'gov'],
+  15: ['用户画像只存稳定事实、不遗忘；事件线候选按用户方案取五种来源并集、上限 20', 'user'],
+  16: ['画像矛盾时按旧记录的牢固度掷骰：唤起 / 覆盖进档案 / 都不', 'user'],
+  17: ['常驻栏：三类免竞争 + 其余竞争 20 个名额，常驻期间不遗忘', 'user'],
+  18: ['免竞争常驻一旦成立就一直保持，除非用户要求修改', 'user'],
+  19: ['事件完结后，才允许把记忆的系数调到 1 以下（缩短）', 'user'],
+  20: ['记忆被真正用到时：强度回满，同时半衰期变长', 'user'],
+  21: ['记忆时钟：对话时比现实快，停顿后减速到 0.01，久不对话就停——不对话就不遗忘', 'user'],
+  22: ['到达遗忘线的攒够一批：95% 移进档案，5% 只留关键词、重新开始遗忘曲线', 'user'],
+  23: ['留下的 5% 随机挑；暂定数值先用着；不要"类别"这一层', 'user'],
+  24: ['熟悉期正常聊天、照常存档，思考模型上下文用到约 70% 时启动记忆系统', 'user'],
+  25: ['没有信息是彻底忘掉的；用户要求忘掉时由用户选彻底删除或存进档案，用户要求时 AI 可以搜档案', 'user'],
+};
+const WHO_TAG = { user: ['user', '用户定'], gov: ['gov', '总纲定'], none: ['none', '日志未写明'] };
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// 行内 markdown：链接只留文字，加粗、行内代码
+const inline = s => esc(s)
+  .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+  .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+  .replace(/`([^`]+)`/g, '<code>$1</code>');
+const tag = (cls, text) => `<span class="tag ${cls}">${esc(text)}</span>`;
+
+// ────────── 解析 ──────────
+function parseDecisions(md) {
+  const out = []; let day = '', cur = null;
+  for (const line of md.split('\n')) {
+    const dm = line.match(/^## (\d{4}-\d{2}-\d{2})/);
+    if (dm) { day = dm[1]; continue; }
+    const m = line.match(/^\*\*D(\d+)\s+(.+?)\*\*\s*(?:（(.+?)）)?/);
+    if (m) {
+      const paren = m[3] || '';
+      const dd = paren.match(/\d{4}-\d{2}-\d{2}/);
+      cur = { id: +m[1], title: m[2], paren, day: dd ? dd[0] : day, body: [] };
+      out.push(cur); continue;
+    }
+    if (cur && line.trim()) cur.body.push(line);
+  }
+  return out;
+}
+function devState(s) {
+  if (/待决定/.test(s)) return 'ask';
+  if (/暂行/.test(s)) return 'tmp';
+  if (/^已/.test(s.trim()) || /已由用户决定|已同意|已改回|已取消/.test(s)) return 'done';
+  return 'none';
+}
+function parseTable(lines) {
+  return lines.filter(l => /^\|/.test(l) && !/^\|\s*-/.test(l)).map(l => l.replace(/^\||\|$/g, '').split('|').map(c => c.trim()));
+}
+function sections(md) {
+  const out = {}; let name = '_head';
+  for (const line of md.split('\n')) {
+    const m = line.match(/^## (.+)/);
+    if (m) { name = m[1].trim(); out[name] = []; continue; }
+    (out[name] = out[name] || []).push(line);
+  }
+  return out;
+}
+
+// 简单的 markdown 渲染（待你确认.md）：标题、引用、有序 / 无序列表（两层）、表格、段落
+function renderMd(md) {
+  const lines = md.split('\n'); let html = '', i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^# /.test(l)) { i++; continue; }
+    if (/^## /.test(l)) { html += `<h3>${inline(l.slice(3))}</h3>`; i++; continue; }
+    if (/^> ?/.test(l)) { let q = []; while (i < lines.length && /^> ?/.test(lines[i])) q.push(lines[i++].replace(/^> ?/, '')); html += `<blockquote>${q.map(inline).join('<br>')}</blockquote>`; continue; }
+    if (/^\|/.test(l)) {
+      const rows = []; while (i < lines.length && /^\|/.test(lines[i])) rows.push(lines[i++]);
+      const t = parseTable(rows);
+      html += `<table><thead><tr>${t[0].map(c => `<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${t.slice(1).map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+      continue;
+    }
+    if (/^(\d+\.|-)\s/.test(l)) {
+      const ordered = /^\d+\./.test(l); const items = [];
+      while (i < lines.length && (/^(\d+\.|-)\s/.test(lines[i]) || /^\s+-\s/.test(lines[i]))) {
+        const x = lines[i++];
+        if (/^\s+-\s/.test(x)) { if (items.length) items[items.length - 1].sub.push(x.replace(/^\s+-\s/, '')); }
+        else items.push({ text: x.replace(/^(\d+\.|-)\s/, ''), num: (x.match(/^(\d+)\./) || [])[1], sub: [] });
+      }
+      const tagName = ordered ? 'ol' : 'ul';
+      html += `<${tagName}${ordered && items[0].num ? ` start="${items[0].num}"` : ''}>` + items.map(it =>
+        `<li>${inline(it.text)}${it.sub.length ? `<ul>${it.sub.map(s => `<li>${inline(s)}</li>`).join('')}</ul>` : ''}</li>`).join('') + `</${tagName}>`;
+      continue;
+    }
+    if (l.trim()) html += `<p>${inline(l)}</p>`;
+    i++;
+  }
+  return html;
+}
+
+// ────────── 渲染 ──────────
+function render(data) {
+  const D = data.docs;
+  const missing = Object.entries(D).filter(([, v]) => !v).map(([k]) => k);
+  $('err').innerHTML = missing.length ? `<div class="err">没找到：${missing.map(esc).join('、')}.md</div>` : '';
+
+  // 决策
+  const decs = D['决策日志'] ? parseDecisions(D['决策日志'].text) : [];
+  let lastDay = null, html = '';
+  for (const d of decs) {
+    if (d.day !== lastDay) { html += `<li class="day">${esc(d.day)}</li>`; lastDay = d.day; }
+    const cur = CURATED[d.id];
+    const who = cur ? cur[1] : (/用户定/.test(d.paren) ? 'user' : 'gov');
+    const one = cur ? cur[0] : (d.body.find(b => /决定：/.test(b)) || '').replace(/^-\s*决定：/, '');
+    const [cls, label] = WHO_TAG[who];
+    const color = who === 'user' ? 'var(--user)' : who === 'gov' ? 'var(--gov)' : 'var(--muted)';
+    html += `<li class="d" style="--c:${color}"><div class="row"><span class="id">D${d.id}</span><span class="t">${inline(d.title)}</span>${tag(cls, label)}</div>
+      <div class="one">${inline(one)}${cur ? '' : ' <span class="muted">（自动读取）</span>'}</div>
+      <details><summary>原文</summary><div class="body">${d.body.map(inline).join('\n')}</div></details></li>`;
+  }
+  $('decisions').innerHTML = html;
+  const nUser = decs.filter(d => (CURATED[d.id] ? CURATED[d.id][1] : (/用户定/.test(d.paren) ? 'user' : 'gov')) === 'user').length;
+
+  // 偏离记录
+  let devRows = [], supp = [];
+  if (D['偏离记录']) {
+    const sec = sections(D['偏离记录'].text);
+    const tableLines = Object.values(sec).flat();
+    devRows = parseTable(tableLines).filter(r => /^\d+$/.test(r[0])).sort((a, b) => a[0] - b[0]);
+    const suppKey = Object.keys(sec).find(k => /补充/.test(k));
+    supp = suppKey ? sec[suppKey].filter(l => /^- /.test(l)).map(l => l.slice(2)) : [];
+  }
+  const devCount = { done: 0, tmp: 0, ask: 0, none: 0 };
+  $('dev').innerHTML = `<table><thead><tr><th>#</th><th>原计划</th><th>实际做法</th><th>状态</th></tr></thead><tbody>` +
+    devRows.map(r => { const s = devState(r[4] || ''); devCount[s]++;
+      return `<tr><td class="n">${esc(r[0])}</td><td>${inline(r[1])}</td><td>${inline(r[2])}<div class="muted" style="font-size:11.5px">原因：${inline(r[3] || '')}</div></td><td>${tag(s, r[4] || '')}</td></tr>`; }).join('') +
+    `</tbody></table>` +
+    (supp.length ? `<details style="margin-top:6px"><summary>不算偏离、但属于补充的做法（${supp.length} 条）</summary><ul class="plain" style="margin-top:4px">${supp.map(s => `<li>${inline(s)}</li>`).join('')}</ul></details>` : '');
+
+  // 待办
+  let memOpen = 0, memDone = 0, doneList = [];
+  if (D['待办']) {
+    const sec = sections(D['待办'].text);
+    const doneKey = Object.keys(sec).find(k => /已完成/.test(k));
+    doneList = doneKey ? sec[doneKey].filter(l => /^- /.test(l)).map(l => l.slice(2)) : [];
+    let tHtml = '';
+    for (const [name, lines] of Object.entries(sec)) {
+      if (name === '_head' || name === doneKey) continue;
+      tHtml += `<h3 style="font-size:13.5px;margin:10px 0 4px">${inline(name)}</h3>`;
+      const rows = parseTable(lines).filter(r => r[0] !== '#');
+      if (rows.length) {
+        tHtml += `<table><tbody>` + rows.map(r => {
+          const struck = /~~/.test(r[0]);
+          const n = r[0].replace(/~~/g, ''); const what = r[1].replace(/~~/g, '');
+          if (/^一/.test(name)) { if (struck) { memDone++; doneList.push(`待办 #${n} ${what}：${r[2]}`); } else memOpen++; }
+          const s = struck ? 'done' : /暂行|已做|实现|一侧已/.test(r[2]) ? 'tmp' : 'todo';
+          return `<tr class="${struck ? 'struck' : ''}"><td class="n">#${esc(n)}</td><td><span class="what">${inline(what)}</span><div class="muted" style="font-size:11.5px">${inline(r[2])}</div></td><td>${tag(s, struck ? '已完成' : s === 'tmp' ? '部分完成' : '未做')}</td></tr>`;
+        }).join('') + `</tbody></table>`;
+      }
+      const items = lines.filter(l => /^- /.test(l));
+      if (items.length) tHtml += `<ul class="plain">` + items.map(l => {
+        const t = l.slice(2); const struck = /^~~/.test(t);
+        return `<li class="${struck ? 'struck' : ''}">${struck ? inline(t).replace(/~~(.+?)~~/, '<span class="what">$1</span>') : inline(t)}</li>`;
+      }).join('') + `</ul>`;
+    }
+    $('todo').innerHTML = tHtml;
+  }
+  $('done').innerHTML = doneList.map(s => `<li>${inline(s)}</li>`).join('');
+
+  // 待你确认
+  const conf = D['待你确认'];
+  $('confirm').innerHTML = conf ? renderMd(conf.text) : '<p class="muted">还没有 00-总纲/待你确认.md</p>';
+  const nConfirm = conf ? (conf.text.match(/^\d+\.\s/gm) || []).length : 0;
+
+  // 测试
+  const T = data.tests || {};
+  const off = T.offline || {}, live = T.live || {};
+  const files = {};
+  for (const [f, n] of Object.entries(off.files || {})) (files[f] = files[f] || { off: 0, live: 0 }).off = n;
+  for (const [f, n] of Object.entries(live.files || {})) (files[f] = files[f] || { off: 0, live: 0 }).live = n;
+  const max = Math.max(1, ...Object.values(files).map(v => v.off + v.live));
+  $('tests').innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:6px">离线 ${off.total ?? '?'} 个（默认运行，用假模型）· 联网 live ${live.total ?? '?'} 个（真实调用 DeepSeek 和本地 Qwen，pytest -m live）。这里只统计数量，通过与否以最近一次实际运行为准。</div>` +
+    `<div class="bars">` + Object.entries(files).sort((a, b) => a[0].localeCompare(b[0])).map(([f, v]) =>
+      `<span class="name" title="${esc(f)}">${esc(f.replace(/^tests[\\/]/, ''))}</span><span class="track"><span style="display:flex;height:100%"><span class="fill" style="width:${v.off / max * 100}%"></span><span class="fill live" style="width:${v.live / max * 100}%"></span></span></span><span class="v">${v.off}${v.live ? ` + ${v.live}` : ''}</span>`).join('') + `</div>`;
+
+  // 提交
+  const G = data.git || [];
+  $('commits').innerHTML = G.map(c => { const m = c.subject.match(/^\[(.+?)\]\s*(.*)$/);
+    return `<li><span class="when">${esc(c.date)}</span><span>${m ? `<span class="area">[${esc(m[1])}]</span> ${esc(m[2])}` : esc(c.subject)}</span></li>`; }).join('');
+
+  // 顶部数字
+  const k = [
+    [decs.length, '决策', `用户定 ${nUser} 条 · D1～D${decs.length ? decs[decs.length - 1].id : '?'}`],
+    [nConfirm, '待你确认', '需要你拍板的问题（不含暂定数值表）', 'ask'],
+    [devRows.length, '偏离记录', `仍有暂行部分 ${devCount.tmp} · 已定 / 已改回 ${devCount.done}`],
+    [memDone, '记忆待办已完成', `还剩 ${memOpen} 项（待办表"一"）`],
+    [(off.total ?? 0) + (live.total ?? 0), '测试', `离线 ${off.total ?? '?'} + 联网 ${live.total ?? '?'}`],
+    [G.length, '提交', G.length ? `最近：${G[0].date}` : ''],
+  ];
+  $('kpis').innerHTML = k.map(([v, l, d, c]) => `<div class="kpi" ${c ? `style="border-color:var(--${c})"` : ''}><div class="v" ${c ? `style="color:var(--${c})"` : ''}>${v}</div><div class="l">${l}</div><div class="d">${esc(d)}</div></div>`).join('');
+
+  const t = new Date(data.now * 1000);
+  $('status').textContent = `已读取 ${t.toLocaleTimeString('zh-CN', { hour12: false })}`;
+}
+
+let lastKey = '';
+async function load() {
+  try {
+    const r = await fetch('/api/docs', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    const key = JSON.stringify([Object.values(data.docs).map(d => d && d.mtime), data.git[0], data.tests]);
+    if (key !== lastKey) { lastKey = key; render(data); }
+    else $('status').textContent = `已读取 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}（无变化）`;
+  } catch (e) {
+    $('status').textContent = '读取失败';
+    $('err').innerHTML = `<div class="err">读不到 /api/docs（${esc(e.message)}）。本页要通过 serve.py 打开：http://127.0.0.1:8790/progress.html；
+      如果服务器是旧版本，请关掉后重新双击「记忆可视化」或运行 serve.py。</div>`;
+  }
+}
+load();
+setInterval(load, 20000);
+</script>
+</body>
+</html>
