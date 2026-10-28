@@ -44,6 +44,7 @@ def test_each_source_contributes(store):
     # 关键词检索的是事件线的标题、摘要和片段标题（不是原文），片段标题是潜意识模型写的一句话概括
     by_keyword, _ = thread_with(store, "老板嫌他请假太多，他想辞职", "老板说我请假太多，想辞职", 200)
     pinned, _ = thread_with(store, "花生过敏", "记住我对花生过敏", 300, emotion=EmotionScore(0.1, 0, 0.95))
+    store.set_resident(pinned, 300, True, "测试")  # 常驻栏单独给，不在候选里（D17）
     by_archive, _ = thread_with(
         store, "老家的事", "母亲在老家种了很多菜", 400
     )  # 原文提到"母亲"，但片段没登记人物
@@ -58,7 +59,7 @@ def test_each_source_contributes(store):
     assert hits[recent] == ["最近活跃"]
     assert "人物重合" in hits[by_people]
     assert "关键词重合" in hits[by_keyword]
-    assert hits[pinned] == ["常驻"]
+    assert pinned not in hits
     assert "档案人名" in hits[by_archive]  # 别名表认出"母亲"就是"我妈"
 
 

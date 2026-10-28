@@ -3,14 +3,17 @@
 见 01-记忆/潜意识.md。目前是最小可用版本，几处暂时做法在函数里用"暂行"标出，对应 00-总纲/待办.md。
 """
 
+import random
 from dataclasses import dataclass, field
 
 from contracts.llm import ChatModel
 from contracts.memory import Segment, days
 from memory.boundaries import conversation_closed
 from memory.candidates import select_candidates
-from memory.forgetting import Trace, clamp_adjustment, initial_half_life, relative_arousal
+from memory.forgetting import clamp_adjustment, initial_half_life, relative_arousal
+from memory.profile import EVOKE, OVERWRITE, resolve_conflict
 from memory.prompts import (
+    CONFLICT_SCHEMA,
     SEGMENT_SCHEMA,
     SUMMARY_SCHEMA,
     THREAD_SCHEMA,
@@ -18,15 +21,18 @@ from memory.prompts import (
     Adjustment,
     MemoryCard,
     ThreadDecision,
+    build_conflict_prompt,
     build_segment_prompt,
     build_summary_prompt,
     build_thread_prompt,
     build_tuning_prompt,
+    parse_conflicts,
     parse_segments,
     parse_summary,
     parse_thread,
     parse_tuning,
 )
+from memory.resident import ResidentReport, effective_strength, refresh_residents
 from memory.store import MemoryStore
 from memory.tuning import GlobalChange, adjust_global
 
@@ -37,11 +43,19 @@ class ConsolidationReport:
     threads: dict[int, ThreadDecision] = field(default_factory=dict)  # 片段 id → 归属决定
     candidate_sources: dict[int, dict[int, list[str]]] = field(default_factory=dict)  # 片段 id → 候选及来源
     changes: list[tuple[str, str, GlobalChange]] = field(default_factory=list)
+    conflicts: list[tuple[int, int, str]] = field(default_factory=list)  # (旧事实, 新事实, 结果)
+    residents: ResidentReport | None = None  # 整理后的常驻栏变化（D17）
 
 
 def consolidate(
-    store: MemoryStore, model: ChatModel, conversation_id: int, now_ts: float
+    store: MemoryStore,
+    model: ChatModel,
+    conversation_id: int,
+    now_ts: float,
+    rng: random.Random | None = None,
 ) -> ConsolidationReport:
+    """rng：画像矛盾时掷骰子用；测试时传入固定种子的 random.Random 以便复现。"""
+    rng = rng or random.Random()
     report = ConsolidationReport()
     turns = store.unsegmented_turns(conversation_id)
     if not turns:
@@ -78,33 +92,41 @@ def consolidate(
                 half_life=initial_half_life(rel, d.emotion.importance, knobs, at_edge=at_edge),
                 last_recall_ts=max(ts_of[t] for t in d.turn_ids),
                 at_edge=at_edge,
+                remember_requested=d.remember_requested,
             )
         )
         if prev is not None:
             store.link_segments(prev.id, seg.id, "next")
         prev = seg
         report.segment_ids.append(seg.id)
-        for about, category, fact in d.facts:  # 稳定事实进用户画像：只合并、不改写、不遗忘
+        for about, category, fact in d.facts:  # 稳定事实进用户画像：原文不改写、不遗忘
             person = None if about in ("用户", "我", "他", "她") else store.upsert_person(about)
-            store.add_profile_fact(person, category, fact, seg.end_ts, seg.id)
+            before = {f.id: f for f in store.profile(person) if f.category == category}
+            fid = store.add_profile_fact(person, category, fact, seg.end_ts, seg.id)
+            if fid not in before and before:  # 是新事实，且同一个人同一类已有旧事实：检查矛盾
+                _handle_conflicts(store, model, rng, fid, fact, about, before, now_ts, report)
 
     # 2. 挂到事件线
     for sid in report.segment_ids:
         seg = store.get_segment(sid)
         people = [store.person(p).name for p in seg.person_ids]
-        hits = select_candidates(store, seg)  # 五种来源取并集，最多 20 条
+        hits = select_candidates(store, seg)  # 四种来源取并集，最多 20 条，不含常驻栏
         report.candidate_sources[sid] = hits
         candidates = [store.thread_card(t) for t in hits]
+        residents = [store.thread_card(t) for t in store.resident_threads()]  # 常驻栏整栏给，不占名额（D17）
         # 没有候选时也问一次：让潜意识模型给新事件线起一个概括这件事的标题
         r = model.chat(
-            build_thread_prompt({"title": seg.title, "people": people}, candidates),
+            build_thread_prompt({"title": seg.title, "people": people}, candidates, residents),
             schema=THREAD_SCHEMA,
             temperature=0,  # 判断类任务，尽量稳定
         )
-        decision = parse_thread(r.data, [c["id"] for c in candidates])
-        targets = decision.attach_to or [
-            store.new_thread(decision.new_title or seg.title, seg.title, now_ts).id
-        ]
+        decision = parse_thread(r.data, [c["id"] for c in candidates + residents])
+        if decision.attach_to:
+            targets = decision.attach_to
+        else:
+            new_tid = store.new_thread(decision.new_title or seg.title, seg.title, now_ts).id
+            store.update_thread(new_tid, ongoing=decision.new_ongoing)
+            targets = [new_tid]
         for tid in targets:
             store.attach(tid, sid, decision.confidence if decision.attach_to else 1.0, now_ts)
         for rid in decision.related:
@@ -147,7 +169,28 @@ def consolidate(
         knobs = store.load_global_knobs()
 
     _mark_last_segment(store, conversation_id, now_ts)
+    report.residents = refresh_residents(store, now_ts)  # 新片段、新事实可能改变常驻栏（D17）
     return report
+
+
+def _handle_conflicts(store, model, rng, new_id, new_fact, about, olds, now_ts, report) -> None:
+    """新事实和旧事实矛盾时，按旧事实的牢固度三选一：唤起 / 覆盖 / 都不（决策 D16）。"""
+    r = model.chat(
+        build_conflict_prompt(new_fact, [(i, f.fact) for i, f in olds.items()], about),
+        schema=CONFLICT_SCHEMA,
+        temperature=0,
+    )
+    ids, reason = parse_conflicts(r.data, list(olds))
+    for old_id in ids:
+        result = resolve_conflict(olds[old_id], now_ts, rng)
+        if result.outcome == EVOKE:
+            store.add_evocation(old_id, new_id, now_ts)
+        elif result.outcome == OVERWRITE:
+            store.archive_profile_fact(old_id, new_id, now_ts)
+        store.log_profile_conflict(
+            old_id, new_id, now_ts, result.firmness, result.probabilities, result.roll, result.outcome, reason
+        )
+        report.conflicts.append((old_id, new_id, result.outcome))
 
 
 def _mark_last_segment(store: MemoryStore, conversation_id: int, now_ts: float) -> None:
@@ -167,8 +210,8 @@ def _update_summary(store: MemoryStore, model: ChatModel, thread_id: int) -> Non
     t = store.get_thread(thread_id)
     history = [store.get_segment(s) for s in t.segment_ids[-10:]]  # 最近 10 个片段就够概括来龙去脉
     r = model.chat(build_summary_prompt(t.title, t.summary, history), schema=SUMMARY_SCHEMA, temperature=0)
-    summary, title = parse_summary(r.data, t.title)
-    store.update_thread(thread_id, title=title, summary=summary)
+    summary, title, ongoing = parse_summary(r.data, t.title)
+    store.update_thread(thread_id, title=title, summary=summary, ongoing=ongoing)
 
 
 def apply_adjustments(
@@ -214,12 +257,11 @@ def _segment_brief(store: MemoryStore, seg: Segment) -> dict:
 
 
 def _card(store: MemoryStore, seg: Segment, now_ts: float) -> MemoryCard:
-    trace = Trace(seg.half_life, days(seg.last_recall_ts), seg.recall_count)
     return MemoryCard(
         seg.id,
         seg.title,
         days(now_ts - seg.start_ts),
-        trace.strength_at(days(now_ts)),
+        effective_strength(store, seg, now_ts),  # 常驻的线不遗忘（D17）
         seg.half_life,
         [store.person(p).name for p in seg.person_ids],
     )

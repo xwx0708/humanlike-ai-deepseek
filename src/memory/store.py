@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS segments (
     title TEXT NOT NULL, start_ts REAL NOT NULL, end_ts REAL NOT NULL,
     arousal REAL, valence REAL, importance REAL, emotion_reason TEXT,
     half_life REAL NOT NULL, last_recall_ts REAL NOT NULL, recall_count INTEGER NOT NULL,
-    adjustment REAL NOT NULL, at_edge INTEGER NOT NULL, state TEXT NOT NULL, trace TEXT NOT NULL
+    adjustment REAL NOT NULL, at_edge INTEGER NOT NULL, state TEXT NOT NULL, trace TEXT NOT NULL,
+    remember_requested INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS segment_turns (
     segment_id INTEGER NOT NULL REFERENCES segments(id), turn_id INTEGER NOT NULL REFERENCES turns(id),
@@ -49,7 +50,12 @@ CREATE TABLE IF NOT EXISTS segment_links (
 );
 CREATE TABLE IF NOT EXISTS threads (
     id INTEGER PRIMARY KEY, title TEXT NOT NULL, summary TEXT NOT NULL,
-    created_ts REAL NOT NULL, updated_ts REAL NOT NULL, merged_into INTEGER REFERENCES threads(id)
+    created_ts REAL NOT NULL, updated_ts REAL NOT NULL, merged_into INTEGER REFERENCES threads(id),
+    ongoing INTEGER NOT NULL DEFAULT 1, resident_since REAL
+);
+CREATE TABLE IF NOT EXISTS resident_log (
+    id INTEGER PRIMARY KEY, thread_id INTEGER NOT NULL REFERENCES threads(id), ts REAL NOT NULL,
+    action TEXT NOT NULL, reason TEXT NOT NULL, score REAL
 );
 CREATE TABLE IF NOT EXISTS thread_segments (
     thread_id INTEGER NOT NULL REFERENCES threads(id), segment_id INTEGER NOT NULL REFERENCES segments(id),
@@ -75,12 +81,21 @@ CREATE INDEX IF NOT EXISTS thread_segments_by_segment ON thread_segments(segment
 CREATE TABLE IF NOT EXISTS profile_facts (
     id INTEGER PRIMARY KEY, person_id INTEGER REFERENCES people(id), category TEXT NOT NULL,
     fact TEXT NOT NULL, fact_key TEXT NOT NULL, first_ts REAL NOT NULL, last_ts REAL NOT NULL,
-    mentions INTEGER NOT NULL
+    mentions INTEGER NOT NULL, archived_ts REAL, superseded_by INTEGER REFERENCES profile_facts(id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS profile_by_key ON profile_facts(IFNULL(person_id, 0), category, fact_key);
+CREATE INDEX IF NOT EXISTS profile_by_key ON profile_facts(IFNULL(person_id, 0), category, fact_key);
 CREATE TABLE IF NOT EXISTS profile_sources (
     fact_id INTEGER NOT NULL REFERENCES profile_facts(id), segment_id INTEGER NOT NULL REFERENCES segments(id),
     PRIMARY KEY (fact_id, segment_id)
+);
+CREATE TABLE IF NOT EXISTS profile_conflicts (
+    id INTEGER PRIMARY KEY, old_id INTEGER NOT NULL REFERENCES profile_facts(id),
+    new_id INTEGER NOT NULL REFERENCES profile_facts(id), ts REAL NOT NULL, firmness REAL NOT NULL,
+    p_evoke REAL NOT NULL, p_overwrite REAL NOT NULL, roll REAL NOT NULL, outcome TEXT NOT NULL, reason TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS evocations (
+    id INTEGER PRIMARY KEY, fact_id INTEGER NOT NULL REFERENCES profile_facts(id),
+    trigger_fact_id INTEGER REFERENCES profile_facts(id), ts REAL NOT NULL, consumed INTEGER NOT NULL DEFAULT 0
 );
 """
 
@@ -172,8 +187,8 @@ class MemoryStore:
         with self.db:
             sid = self.db.execute(
                 "INSERT INTO segments (conversation_id, title, start_ts, end_ts, arousal, valence, importance, "
-                "emotion_reason, half_life, last_recall_ts, recall_count, adjustment, at_edge, state, trace) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "emotion_reason, half_life, last_recall_ts, recall_count, adjustment, at_edge, state, trace, "
+                "remember_requested) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     seg.conversation_id,
                     seg.title,
@@ -190,6 +205,7 @@ class MemoryStore:
                     int(seg.at_edge),
                     seg.state,
                     seg.trace,
+                    int(seg.remember_requested),
                 ),
             ).lastrowid
             self.db.executemany(
@@ -233,6 +249,7 @@ class MemoryStore:
             bool(r["at_edge"]),
             r["state"],
             r["trace"],
+            bool(r["remember_requested"]),
         )
 
     def save_segment_state(self, seg: Segment) -> None:
@@ -320,14 +337,77 @@ class MemoryStore:
             segs,
             people,
             r["merged_into"],
+            bool(r["ongoing"]),
+            r["resident_since"],
         )
 
-    def update_thread(self, tid: int, *, title: str | None = None, summary: str | None = None) -> None:
+    def update_thread(
+        self, tid: int, *, title: str | None = None, summary: str | None = None, ongoing: bool | None = None
+    ) -> None:
         with self.db:
             if title is not None:
                 self.db.execute("UPDATE threads SET title = ? WHERE id = ?", (title, tid))
             if summary is not None:
                 self.db.execute("UPDATE threads SET summary = ? WHERE id = ?", (summary, tid))
+            if ongoing is not None:
+                self.db.execute("UPDATE threads SET ongoing = ? WHERE id = ?", (int(ongoing), tid))
+
+    # ---------- 常驻栏（D17）：单位是事件线 ----------
+
+    def thread_stats(self, tid: int) -> dict[str, Any]:
+        """常驻打分用的统计：线上片段的最高重要性和唤醒度、回忆总次数、出现在几场对话里、
+        是否有用户要求记住的片段、最近更新时间、是否仍在进行。"""
+        r = self.db.execute(
+            "SELECT MAX(s.importance) AS importance, MAX(s.arousal) AS arousal, SUM(s.recall_count) AS recalls, "
+            "COUNT(DISTINCT s.conversation_id) AS conversations, MAX(s.remember_requested) AS remember "
+            "FROM thread_segments ts JOIN segments s ON s.id = ts.segment_id WHERE ts.thread_id = ?",
+            (tid,),
+        ).fetchone()
+        t = self.db.execute("SELECT updated_ts, ongoing FROM threads WHERE id = ?", (tid,)).fetchone()
+        return {
+            "importance": r["importance"] or 0.0,
+            "arousal": r["arousal"] or 0.0,
+            "recalls": r["recalls"] or 0,
+            "conversations": r["conversations"] or 0,
+            "remember_requested": bool(r["remember"]),
+            "updated_ts": t["updated_ts"],
+            "ongoing": bool(t["ongoing"]),
+        }
+
+    def thread_has_profile_fact(self, tid: int) -> bool:
+        """这条事件线上有没有片段是用户画像（仍在画像中的事实）的出处，即"涉及用户真实信息"。"""
+        return (
+            self.db.execute(
+                "SELECT 1 FROM thread_segments ts JOIN profile_sources ps ON ps.segment_id = ts.segment_id "
+                "JOIN profile_facts f ON f.id = ps.fact_id WHERE ts.thread_id = ? AND f.archived_ts IS NULL LIMIT 1",
+                (tid,),
+            ).fetchone()
+            is not None
+        )
+
+    def resident_threads(self) -> list[int]:
+        return [
+            r[0]
+            for r in self.db.execute(
+                "SELECT id FROM threads WHERE resident_since IS NOT NULL AND merged_into IS NULL ORDER BY resident_since"
+            )
+        ]
+
+    def set_resident(
+        self, tid: int, ts: float, resident: bool, reason: str, score: float | None = None
+    ) -> None:
+        """进入或退出常驻栏，并记日志。退出后不重置遗忘：照常从最近一次被提及开始算。"""
+        with self.db:
+            self.db.execute(
+                "UPDATE threads SET resident_since = ? WHERE id = ?", (ts if resident else None, tid)
+            )
+            self.db.execute(
+                "INSERT INTO resident_log (thread_id, ts, action, reason, score) VALUES (?, ?, ?, ?, ?)",
+                (tid, ts, "进入" if resident else "退出", reason, score),
+            )
+
+    def resident_log(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self.db.execute("SELECT * FROM resident_log ORDER BY id")]
 
     def threads_of_segment(self, segment_id: int) -> list[int]:
         return [
@@ -467,18 +547,18 @@ class MemoryStore:
             for r in self.db.execute(sql + " ORDER BY id", args)
         ]
 
-    # ---------- 用户画像（稳定事实：只能合并、不能改写、不参与遗忘） ----------
+    # ---------- 用户画像（稳定事实：不改写原文、不参与遗忘；矛盾时可能被覆盖进档案，见 D16） ----------
 
     def add_profile_fact(
         self, person_id: int | None, category: str, fact: str, ts: float, segment_id: int | None = None
     ) -> int:
-        """登记一条稳定事实。同一个人、同一类、内容相同（忽略标点和空格）的事实合并：
-        只增加提及次数、更新最近提及时间、补充出处，原文不改。"""
+        """登记一条稳定事实。同一个人、同一类、内容相同（忽略标点和空格）的在画像中的事实合并：
+        只增加提及次数、更新最近提及时间、补充出处，原文不改。已移进档案的旧事实不参与合并。"""
         key = _fact_key(fact)
         with self.db:
             row = self.db.execute(
                 "SELECT id FROM profile_facts WHERE IFNULL(person_id, 0) = IFNULL(?, 0) AND category = ? "
-                "AND fact_key = ?",
+                "AND fact_key = ? AND archived_ts IS NULL",
                 (person_id, category, key),
             ).fetchone()
             if row:
@@ -497,11 +577,17 @@ class MemoryStore:
                 self.db.execute("INSERT OR IGNORE INTO profile_sources VALUES (?, ?)", (fid, segment_id))
         return fid
 
-    def profile(self, person_id: int | None = None, *, everyone: bool = False) -> list[ProfileFact]:
-        """某个人（默认用户本人）的画像；everyone=True 时返回所有人的。"""
-        sql, args = "SELECT * FROM profile_facts", ()
+    def profile(
+        self, person_id: int | None = None, *, everyone: bool = False, archived: bool = False
+    ) -> list[ProfileFact]:
+        """某个人（默认用户本人）的画像；everyone=True 时返回所有人的。
+        archived=False 只返回画像中的；archived=True 只返回已被覆盖、移进档案的。"""
+        sql, args = (
+            "SELECT * FROM profile_facts WHERE archived_ts IS " + ("NOT NULL" if archived else "NULL"),
+            (),
+        )
         if not everyone:
-            sql, args = sql + " WHERE IFNULL(person_id, 0) = IFNULL(?, 0)", (person_id,)
+            sql, args = sql + " AND IFNULL(person_id, 0) = IFNULL(?, 0)", (person_id,)
         out = []
         for r in self.db.execute(sql + " ORDER BY category, first_ts", args):
             sources = [
@@ -520,9 +606,55 @@ class MemoryStore:
                     r["last_ts"],
                     r["mentions"],
                     sources,
+                    r["archived_ts"],
+                    r["superseded_by"],
                 )
             )
         return out
+
+    def archive_profile_fact(self, old_id: int, new_id: int, ts: float) -> None:
+        """覆盖：旧事实移进档案（不删除），记下是哪条新事实覆盖了它。"""
+        with self.db:
+            self.db.execute(
+                "UPDATE profile_facts SET archived_ts = ?, superseded_by = ? WHERE id = ?",
+                (ts, new_id, old_id),
+            )
+
+    def log_profile_conflict(
+        self,
+        old_id: int,
+        new_id: int,
+        ts: float,
+        firmness: float,
+        probs: dict[str, float],
+        roll: float,
+        outcome: str,
+        reason: str,
+    ) -> None:
+        with self.db:
+            self.db.execute(
+                "INSERT INTO profile_conflicts (old_id, new_id, ts, firmness, p_evoke, p_overwrite, roll, outcome, "
+                "reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (old_id, new_id, ts, firmness, probs["唤起"], probs["覆盖"], roll, outcome, reason),
+            )
+
+    def profile_conflicts(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self.db.execute("SELECT * FROM profile_conflicts ORDER BY id")]
+
+    def add_evocation(self, fact_id: int, trigger_fact_id: int | None, ts: float) -> None:
+        """唤起：这条旧事实被重新想起，等浮现区（扫描器）或思考模型来取。"""
+        with self.db:
+            self.db.execute(
+                "INSERT INTO evocations (fact_id, trigger_fact_id, ts) VALUES (?, ?, ?)",
+                (fact_id, trigger_fact_id, ts),
+            )
+
+    def pending_evocations(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self.db.execute("SELECT * FROM evocations WHERE consumed = 0 ORDER BY id")]
+
+    def consume_evocation(self, evocation_id: int) -> None:
+        with self.db:
+            self.db.execute("UPDATE evocations SET consumed = 1 WHERE id = ?", (evocation_id,))
 
     # ---------- 事件线候选的查询（候选怎么取见 memory.candidates） ----------
 
@@ -549,18 +681,6 @@ class MemoryStore:
                 "JOIN thread_segments ts ON ts.segment_id = st.segment_id JOIN threads t ON t.id = ts.thread_id "
                 f"WHERE t.merged_into IS NULL AND instr(tu.content, ?) > 0 AND tu.id NOT IN ({excl})",
                 (text, *exclude_turns),
-            )
-        ]
-
-    def important_threads(self, min_arousal: float, min_importance: float) -> list[int]:
-        """含有高情绪或高重要性片段的事件线（常驻候选），最近活跃的在前。"""
-        return [
-            r[0]
-            for r in self.db.execute(
-                "SELECT t.id FROM threads t JOIN thread_segments ts ON ts.thread_id = t.id "
-                "JOIN segments s ON s.id = ts.segment_id WHERE t.merged_into IS NULL "
-                "GROUP BY t.id HAVING MAX(s.arousal) >= ? OR MAX(s.importance) >= ? ORDER BY t.updated_ts DESC",
-                (min_arousal, min_importance),
             )
         ]
 

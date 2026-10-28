@@ -24,6 +24,12 @@ def _clamp(x: Any, lo: float, hi: float, default: float) -> float:
         return default
 
 
+# 画像事实里不该出现的相对时间词：画像永远不会被遗忘，过一阵子这类话就不对了
+_RELATIVE_TIME = re.compile(
+    r"近期|最近|近来|这几天|这阵子|目前|现在|刚刚|刚才|今天|明天|昨天|后天|本周|这周|下周|上周|本月|这个月|下个月|上个月|今年|明年|去年"
+)
+
+
 def _hm(ts: float) -> str:
     return time.strftime("%m-%d %H:%M", time.localtime(ts))
 
@@ -69,6 +75,8 @@ SEGMENT_SYSTEM = """你是一个聊天 AI 的"潜意识"，在后台整理它和
   - category：从 {categories} 中选一个。
   - fact：一句简短的陈述，例如"对花生过敏""在杭州工作"。
   - 没有就给空列表。大多数片段都没有。
+- remember_requested：用户是否**明确要求**记住这个片段里的事（"记住这个""你别忘了""帮我记一下"）。
+  只看用户有没有这样说，不看事情重不重要。
 
 只输出 JSON。""".replace("{categories}", "、".join(PROFILE_CATEGORIES))
 
@@ -109,6 +117,7 @@ SEGMENT_SCHEMA: dict[str, Any] = {
                             "required": ["about", "category", "fact"],
                         },
                     },
+                    "remember_requested": {"type": "boolean"},
                 },
                 "required": [
                     "messages",
@@ -119,6 +128,7 @@ SEGMENT_SCHEMA: dict[str, Any] = {
                     "importance",
                     "emotion_reason",
                     "facts",
+                    "remember_requested",
                 ],
             },
         }
@@ -138,6 +148,7 @@ class SegmentDraft:
     facts: list[tuple[str, str, str]] = field(
         default_factory=list
     )  # (说的是谁, 类别, 事实)；"用户"指用户本人
+    remember_requested: bool = False  # 用户明确要求记住（常驻栏免竞争，D17）
 
 
 def build_segment_prompt(
@@ -177,10 +188,19 @@ def parse_segments(data: dict[str, Any], turns: list[ChatTurn]) -> list[SegmentD
         facts = []
         for f in raw.get("facts", []) or []:
             text = str(f.get("fact", "")).strip()
-            if text:
+            if text and not _RELATIVE_TIME.search(text):  # 带相对时间的不是稳定事实，模型漏判时在这里拦住
                 category = f.get("category") if f.get("category") in PROFILE_CATEGORIES else "其他"
                 facts.append((str(f.get("about", "")).strip() or "用户", category, text))
-        drafts.append(SegmentDraft([turns[i - 1].id for i in idx], title, people, emotion, facts))
+        drafts.append(
+            SegmentDraft(
+                [turns[i - 1].id for i in idx],
+                title,
+                people,
+                emotion,
+                facts,
+                raw.get("remember_requested") is True,
+            )
+        )
     if not drafts:
         raise ValueError("潜意识模型没有切出任何有效片段")
 
@@ -209,9 +229,11 @@ THREAD_SYSTEM = """你是一个聊天 AI 的"潜意识"。用户的经历按"事
 - 片段的主体是一件新的事时，即使它是由已有的事引起的（例如因为妈妈住院而想辞职），也要新建，
   并把引起它的那条事件线放进 related。
 - 都不属于，就选"新建"，并给新事件线起一个短标题，概括这件事而不是这个片段，例如"妈妈的健康""工作去留""周末爬山"。
-- 没有候选事件线时，必须新建，只需要给出标题。
+- 候选分两栏："常驻事件线"是一直记得的事，"其他候选"是这次检索出来的。两栏一样对待，都可以选。
+- 两栏都没有时，必须新建，只需要给出标题。
 - confidence 是你的把握，0～1。拿不准时给低分，系统会先新建，晚上再检查要不要合并。错误地合并比错误地新建更难发现。
 - related 列出"有关但不是同一件事"的事件线编号，用来建立关联，可以为空。
+- new_thread_ongoing：只在新建时有意义。这件事现在是否还在进行（还没有结局、用户还在为它操心为 true；一次性告知的事实、已经结束的事为 false）。
 
 只输出 JSON。"""
 
@@ -221,11 +243,20 @@ THREAD_SCHEMA: dict[str, Any] = {
         "thread_ids": {"type": "array", "items": {"type": "integer"}},
         "new_thread": {"type": "boolean"},
         "new_thread_title": {"type": "string"},
+        "new_thread_ongoing": {"type": "boolean"},
         "related": {"type": "array", "items": {"type": "integer"}},
         "confidence": {"type": "number"},
         "reason": {"type": "string"},
     },
-    "required": ["thread_ids", "new_thread", "new_thread_title", "related", "confidence", "reason"],
+    "required": [
+        "thread_ids",
+        "new_thread",
+        "new_thread_title",
+        "new_thread_ongoing",
+        "related",
+        "confidence",
+        "reason",
+    ],
 }
 
 THREAD_CONFIDENCE_MIN = 0.6  # 把握低于此值就新建（暂定，待用真实数据校准）
@@ -239,23 +270,34 @@ class ThreadDecision:
     confidence: float
     reason: str
     low_confidence: bool = False  # 模型想挂到已有线，但把握不够，被改成了新建
+    new_ongoing: bool = True  # 新建时：这件事是否还在进行（D17）
 
     @property
     def create(self) -> bool:
         return not self.attach_to
 
 
-def build_thread_prompt(segment: dict[str, Any], candidates: list[dict[str, Any]]) -> list[Message]:
-    """segment / candidates 都是卡片：标题、一句话摘要（片段可无）、最近片段标题、涉及人物。"""
-    cards = "\n".join(
+def _thread_cards(cards: list[dict[str, Any]]) -> str:
+    return "\n".join(
         f"[{c['id']}] {c['title']}｜摘要：{c.get('summary', '')}｜最近：{c.get('latest_segment', '')}"
         f"｜人物：{'、'.join(c.get('people', [])) or '无'}"
-        for c in candidates
+        for c in cards
     )
+
+
+def build_thread_prompt(
+    segment: dict[str, Any], candidates: list[dict[str, Any]], residents: list[dict[str, Any]] = ()
+) -> list[Message]:
+    """segment / candidates / residents 都是卡片：标题、一句话摘要（片段可无）、最近片段标题、涉及人物。
+    residents 是常驻栏（D17），单独一栏给出，不占 candidates 的名额。"""
     seg = f"标题：{segment['title']}｜人物：{'、'.join(segment.get('people', [])) or '无'}"
     if segment.get("context"):
         seg += f"｜前后文：{segment['context']}"
-    return [system(THREAD_SYSTEM), user(f"新片段：\n{seg}\n\n候选事件线：\n{cards or '（没有候选）'}")]
+    body = (
+        f"新片段：\n{seg}\n\n常驻事件线：\n{_thread_cards(list(residents)) or '（没有）'}"
+        f"\n\n其他候选：\n{_thread_cards(candidates) or '（没有）'}"
+    )
+    return [system(THREAD_SYSTEM), user(body)]
 
 
 def parse_thread(
@@ -270,7 +312,15 @@ def parse_thread(
     if data.get("new_thread") or low:
         related = list(dict.fromkeys([*related, *ids]))  # 没把握挂上去的，至少记成"有关"
         ids = []
-    return ThreadDecision(ids, title, related, confidence, str(data.get("reason", "")).strip(), low)
+    return ThreadDecision(
+        ids,
+        title,
+        related,
+        confidence,
+        str(data.get("reason", "")).strip(),
+        low,
+        data.get("new_thread_ongoing") is not False,
+    )
 
 
 # ====================================================================================
@@ -380,13 +430,19 @@ SUMMARY_SYSTEM = """你是一个聊天 AI 的"潜意识"。一条事件线（跨
 - summary：一句话，按时间顺序概括这件事的来龙去脉和最新进展，不超过 60 个字。例如"他妈妈先是咳嗽，后来查出肺炎住院，现在已出院"。
 - 用第三人称"他"指用户。只写片段里有的事，不要推测。
 - new_title：标题一般不改，留空。只有原标题明显概括不了这件事时，才给出新的短标题（不超过 12 个字）。
+- ongoing：这件事**现在是否还在进行**。还没有结局、还在发展、用户还在为它操心，就是 true（"妈妈住院中""在考虑辞职"）；
+  已经有了结局或告一段落，就是 false（"妈妈已出院、恢复良好""已经换了工作"）。
 
 只输出 JSON。"""
 
 SUMMARY_SCHEMA: dict[str, Any] = {
     "type": "object",
-    "properties": {"summary": {"type": "string"}, "new_title": {"type": "string"}},
-    "required": ["summary", "new_title"],
+    "properties": {
+        "summary": {"type": "string"},
+        "new_title": {"type": "string"},
+        "ongoing": {"type": "boolean"},
+    },
+    "required": ["summary", "new_title", "ongoing"],
 }
 
 
@@ -401,10 +457,48 @@ def build_summary_prompt(title: str, summary: str, segments: list) -> list[Messa
     ]
 
 
-def parse_summary(data: dict[str, Any], old_title: str) -> tuple[str, str]:
-    """返回 (新摘要, 标题)。摘要为空时报错；新标题为空或过长时沿用原标题。"""
+def parse_summary(data: dict[str, Any], old_title: str) -> tuple[str, str, bool]:
+    """返回 (新摘要, 标题, 是否仍在进行)。摘要为空时报错；新标题为空或过长时沿用原标题；
+    没给出 ongoing 时按"仍在进行"处理。"""
     summary = str(data.get("summary", "")).strip()
     if not summary:
         raise ValueError("潜意识模型没有给出摘要")
     title = str(data.get("new_title", "")).strip()
-    return summary[:120], (title if 0 < len(title) <= 20 else old_title)
+    return summary[:120], (title if 0 < len(title) <= 20 else old_title), data.get("ongoing") is not False
+
+
+# ====================================================================================
+# 五、判断画像事实是否矛盾（决策 D16）
+# ====================================================================================
+
+CONFLICT_SYSTEM = """你是一个聊天 AI 的"潜意识"，在维护用户画像（长期稳定的事实）。现在有一条新事实，
+判断它和哪些旧事实矛盾。
+
+## 规则
+- 矛盾：两条说的是同一件事，但不能同时成立。例如"在杭州工作"和"在上海工作"；"对花生过敏"和"不对花生过敏"；
+  "妹妹叫小雨"和"妹妹叫小雪"（如果明显说的是同一个妹妹）。
+- 不算矛盾：只是补充或更具体（"在杭州工作"和"在杭州做前端"）；说的是不同的事（"对花生过敏"和"对芒果过敏"）；
+  两条可以同时成立（"喜欢跑步"和"喜欢游泳"）。
+- 拿不准就不算矛盾。
+
+只输出 JSON。"""
+
+CONFLICT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "conflicts": {"type": "array", "items": {"type": "integer"}},
+        "reason": {"type": "string"},
+    },
+    "required": ["conflicts", "reason"],
+}
+
+
+def build_conflict_prompt(new_fact: str, old_facts: list[tuple[int, str]], about: str) -> list[Message]:
+    olds = "\n".join(f"[{i}] {f}" for i, f in old_facts)
+    return [system(CONFLICT_SYSTEM), user(f"说的是：{about}\n新事实：{new_fact}\n\n旧事实：\n{olds}")]
+
+
+def parse_conflicts(data: dict[str, Any], old_ids: list[int]) -> tuple[list[int], str]:
+    valid = set(old_ids)
+    ids = [i for i in dict.fromkeys(data.get("conflicts", [])) if i in valid]
+    return ids, str(data.get("reason", "")).strip()

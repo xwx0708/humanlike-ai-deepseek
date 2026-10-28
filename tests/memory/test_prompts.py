@@ -105,7 +105,7 @@ def test_thread_prompt_and_parse():
         ],
     )
     assert "[7] 妈妈的健康" in msgs[1].content and "人物：妈妈" in msgs[1].content
-    base = {"new_thread_title": "", "related": [], "reason": "同一件事"}
+    base = {"new_thread_title": "", "related": [], "new_thread_ongoing": True, "reason": "同一件事"}
     d = parse_thread({**base, "thread_ids": [7, 8], "new_thread": False, "confidence": 0.9}, [7])
     assert d.attach_to == [7] and not d.create
     low = parse_thread({**base, "thread_ids": [7], "new_thread": False, "confidence": 0.3}, [7])
@@ -178,6 +178,7 @@ def _add_old_cough_memory(store):
                 "new_thread": True,
                 "new_thread_title": "妈妈的健康",
                 "related": [],
+                "new_thread_ongoing": True,
                 "confidence": 1,
                 "reason": "没有候选",
             },
@@ -227,15 +228,17 @@ def test_consolidate_end_to_end_with_fake_model(store):
                 "new_thread": False,
                 "new_thread_title": "",
                 "related": [],
+                "new_thread_ongoing": True,
                 "confidence": 0.9,
                 "reason": "同一个人的健康",
             },
-            {"summary": "他妈妈先是咳嗽，半年后住院", "new_title": ""},
+            {"summary": "他妈妈先是咳嗽，半年后住院", "new_title": "", "ongoing": True},
             {
                 "thread_ids": [],
                 "new_thread": True,
                 "new_thread_title": "周末爬山",
                 "related": [],
+                "new_thread_ongoing": True,
                 "confidence": 0.8,
                 "reason": "新的事",
             },
@@ -293,6 +296,7 @@ def test_last_segment_marked_once_when_conversation_ends(store):
         "new_thread": True,
         "new_thread_title": "T",
         "related": [],
+        "new_thread_ongoing": True,
         "confidence": 1,
         "reason": "",
     }
@@ -340,3 +344,41 @@ def test_parse_segments_facts():
     }
     [d] = parse_segments(data, ts)
     assert d.facts == [("用户", "过敏与禁忌", "对花生过敏"), ("妹妹", "其他", "名叫小雨")]
+
+
+def test_relative_time_facts_are_dropped():
+    ts = turns("我妈最近住院了，我对花生过敏")
+    data = {
+        "segments": [
+            {
+                "messages": [1],
+                "title": "t",
+                "people": [],
+                "arousal": 0,
+                "valence": 0,
+                "importance": 0,
+                "emotion_reason": "",
+                "remember_requested": False,
+                "facts": [
+                    {"about": "用户", "category": "长期健康", "fact": "用户的母亲近期因肺炎住院"},
+                    {"about": "用户", "category": "过敏与禁忌", "fact": "对花生过敏"},
+                ],
+            }
+        ]
+    }
+    [d] = parse_segments(data, ts)
+    assert d.facts == [("用户", "过敏与禁忌", "对花生过敏")]
+
+
+def test_new_thread_ongoing_flag():
+    base = {
+        "thread_ids": [],
+        "new_thread": True,
+        "new_thread_title": "花生过敏",
+        "related": [],
+        "new_thread_ongoing": True,
+        "confidence": 1,
+        "reason": "",
+    }
+    assert parse_thread({**base, "new_thread_ongoing": False}, []).new_ongoing is False
+    assert parse_thread(base, []).new_ongoing is True  # 没给就按进行中

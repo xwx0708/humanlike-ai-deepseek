@@ -1,10 +1,11 @@
-"""事件线候选：五种来源取并集，总数上限 20 条（用户方案，见 01-记忆/事件切分.md 第三层）。
+"""事件线候选（用户方案，见 01-记忆/事件切分.md 第三层）。
 
+常驻事件线单独成栏，整栏交给潜意识模型，不占名额（决策 D17，见 memory.resident）。
+其余四种来源取并集，总数上限 20 条，且不含常驻的线：
 1. 最近活跃的事件线
 2. 人名或称谓重合的事件线（经人物别名表归一）
 3. 关键词重合的事件线（jieba 分词 + BM25 打分）
-4. 高情绪、高重要性的事件线（常驻候选）
-5. 档案中人名强匹配的事件线（在消息原文里找人物的叫法，包括已经遗忘的片段）
+4. 档案中人名强匹配的事件线（在消息原文里找人物的叫法，包括已经遗忘的片段）
 """
 
 import logging
@@ -20,7 +21,7 @@ from memory.store import MemoryStore
 
 jieba.setLogLevel(logging.WARNING)
 
-SOURCES = ("最近活跃", "人物重合", "关键词重合", "常驻", "档案人名")
+SOURCES = ("最近活跃", "人物重合", "关键词重合", "档案人名")
 
 
 @dataclass(frozen=True)
@@ -30,8 +31,6 @@ class CandidateRules:
     max_total: int = 20  # 用户方案：总数上限 20
     recent: int = 8  # 最近活跃取几条
     keyword: int = 8  # 关键词重合取几条
-    min_arousal: float = 0.7  # 常驻候选：线上任一片段唤醒度达到此值
-    min_importance: float = 0.7  # 或重要性达到此值
     min_alias_len: int = 2  # 档案人名匹配时，叫法至少几个字（太短的"妈""哥"会误匹配）
 
 
@@ -104,11 +103,14 @@ def bm25(
 def select_candidates(
     store: MemoryStore, segment: Segment, rules: CandidateRules = DEFAULT_RULES
 ) -> dict[int, list[str]]:
-    """返回 {事件线 id: 命中的来源列表}，最多 rules.max_total 条。"""
+    """返回 {事件线 id: 命中的来源列表}，最多 rules.max_total 条，不含常驻栏里的线。"""
     hits: dict[int, list[str]] = {}
+    resident = set(store.resident_threads())
 
     def add(tids, source):
         for t in tids:
+            if t in resident:
+                continue
             hits.setdefault(t, [])
             if source not in hits[t]:
                 hits[t].append(source)
@@ -126,15 +128,13 @@ def select_candidates(
         "关键词重合",
     )
 
-    add(store.important_threads(rules.min_arousal, rules.min_importance), "常驻")
-
     for pid in segment.person_ids:
         for alias in store.person(pid).aliases:
             if len(alias) >= rules.min_alias_len:
                 add(store.threads_mentioning(alias, exclude_turns=segment.message_ids), "档案人名")
 
     if len(hits) > rules.max_total:
-        # 暂行：命中来源多的优先，其次最近活跃的优先（排序规则待定，见 00-总纲/偏离记录.md）
+        # 暂行：命中来源多的优先，其次最近活跃的优先（见 00-总纲/偏离记录.md #9）
         recency = {tid: i for i, tid in enumerate(live)}
         keep = sorted(hits, key=lambda t: (-len(hits[t]), recency.get(t, len(live))))[: rules.max_total]
         hits = {t: hits[t] for t in keep}
