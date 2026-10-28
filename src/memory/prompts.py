@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from contracts.llm import Message, system, user
-from contracts.memory import ChatTurn, EmotionScore
+from contracts.memory import PROFILE_CATEGORIES, ChatTurn, EmotionScore
 from memory.forgetting import ForgettingKnobs
 from memory.tuning import TUNABLE
 
@@ -59,8 +59,18 @@ SEGMENT_SYSTEM = """你是一个聊天 AI 的"潜意识"，在后台整理它和
     - 1：用户明确说"记住这个"。
   - emotion_reason：一句话说明打分理由。
 - 反讽和含蓄表达容易判错：说"太好了又加班"是负面；语气突然变得简短冷淡，可能比字面更严重。
+- facts：片段里出现的**长期稳定的事实**，会存进用户画像，永远不会被遗忘，所以宁缺毋滥。
+  - 只收不会很快改变的事：过敏和忌口、长期病史、家人和关系（"他妹妹叫小雨"）、生日和纪念日、职业和学校、
+    住在哪里、长期的喜好。
+  - **不收**一时的状态和事件："妈妈住院了""今天很累""周末要去爬山"都不是。
+  - **不收**带"明天""下周""下个月""最近"这类相对时间的事：画像永远不会被遗忘，过一阵子这类话就不对了。
+    即将发生的事（"妹妹下个月结婚"）是事件，不是事实；只有事情本身变成长期事实时才收（"妹妹已婚"）。
+  - about：说的是谁。用户本人写"用户"，其他人写 people 里的常用叫法。
+  - category：从 {categories} 中选一个。
+  - fact：一句简短的陈述，例如"对花生过敏""在杭州工作"。
+  - 没有就给空列表。大多数片段都没有。
 
-只输出 JSON。"""
+只输出 JSON。""".replace("{categories}", "、".join(PROFILE_CATEGORIES))
 
 SEGMENT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -87,6 +97,18 @@ SEGMENT_SCHEMA: dict[str, Any] = {
                     "valence": {"type": "number"},
                     "importance": {"type": "number"},
                     "emotion_reason": {"type": "string"},
+                    "facts": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "about": {"type": "string"},
+                                "category": {"type": "string", "enum": list(PROFILE_CATEGORIES)},
+                                "fact": {"type": "string"},
+                            },
+                            "required": ["about", "category", "fact"],
+                        },
+                    },
                 },
                 "required": [
                     "messages",
@@ -96,6 +118,7 @@ SEGMENT_SCHEMA: dict[str, Any] = {
                     "valence",
                     "importance",
                     "emotion_reason",
+                    "facts",
                 ],
             },
         }
@@ -112,6 +135,9 @@ class SegmentDraft:
     title: str
     people: list[tuple[str, list[str]]]  # (常用叫法, 其他叫法)
     emotion: EmotionScore
+    facts: list[tuple[str, str, str]] = field(
+        default_factory=list
+    )  # (说的是谁, 类别, 事实)；"用户"指用户本人
 
 
 def build_segment_prompt(
@@ -148,7 +174,13 @@ def parse_segments(data: dict[str, Any], turns: list[ChatTurn]) -> list[SegmentD
             importance=_clamp(raw.get("importance"), 0, 1, 0.1),
             reason=str(raw.get("emotion_reason", "")).strip(),
         )
-        drafts.append(SegmentDraft([turns[i - 1].id for i in idx], title, people, emotion))
+        facts = []
+        for f in raw.get("facts", []) or []:
+            text = str(f.get("fact", "")).strip()
+            if text:
+                category = f.get("category") if f.get("category") in PROFILE_CATEGORIES else "其他"
+                facts.append((str(f.get("about", "")).strip() or "用户", category, text))
+        drafts.append(SegmentDraft([turns[i - 1].id for i in idx], title, people, emotion, facts))
     if not drafts:
         raise ValueError("潜意识模型没有切出任何有效片段")
 

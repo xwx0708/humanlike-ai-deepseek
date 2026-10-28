@@ -5,12 +5,13 @@
 """
 
 import json
+import re
 import sqlite3
 from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
 
-from contracts.memory import ChatTurn, Conversation, EmotionScore, Person, Segment, Thread
+from contracts.memory import ChatTurn, Conversation, EmotionScore, Person, ProfileFact, Segment, Thread
 from memory.forgetting import ForgettingKnobs
 from memory.tuning import GlobalChange
 
@@ -71,6 +72,16 @@ CREATE TABLE IF NOT EXISTS tuning_log (
 CREATE INDEX IF NOT EXISTS turns_by_conversation ON turns(conversation_id, id);
 CREATE INDEX IF NOT EXISTS segments_by_conversation ON segments(conversation_id);
 CREATE INDEX IF NOT EXISTS thread_segments_by_segment ON thread_segments(segment_id);
+CREATE TABLE IF NOT EXISTS profile_facts (
+    id INTEGER PRIMARY KEY, person_id INTEGER REFERENCES people(id), category TEXT NOT NULL,
+    fact TEXT NOT NULL, fact_key TEXT NOT NULL, first_ts REAL NOT NULL, last_ts REAL NOT NULL,
+    mentions INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS profile_by_key ON profile_facts(IFNULL(person_id, 0), category, fact_key);
+CREATE TABLE IF NOT EXISTS profile_sources (
+    fact_id INTEGER NOT NULL REFERENCES profile_facts(id), segment_id INTEGER NOT NULL REFERENCES segments(id),
+    PRIMARY KEY (fact_id, segment_id)
+);
 """
 
 
@@ -455,3 +466,117 @@ class MemoryStore:
             )
             for r in self.db.execute(sql + " ORDER BY id", args)
         ]
+
+    # ---------- 用户画像（稳定事实：只能合并、不能改写、不参与遗忘） ----------
+
+    def add_profile_fact(
+        self, person_id: int | None, category: str, fact: str, ts: float, segment_id: int | None = None
+    ) -> int:
+        """登记一条稳定事实。同一个人、同一类、内容相同（忽略标点和空格）的事实合并：
+        只增加提及次数、更新最近提及时间、补充出处，原文不改。"""
+        key = _fact_key(fact)
+        with self.db:
+            row = self.db.execute(
+                "SELECT id FROM profile_facts WHERE IFNULL(person_id, 0) = IFNULL(?, 0) AND category = ? "
+                "AND fact_key = ?",
+                (person_id, category, key),
+            ).fetchone()
+            if row:
+                fid = row[0]
+                self.db.execute(
+                    "UPDATE profile_facts SET mentions = mentions + 1, last_ts = MAX(last_ts, ?) WHERE id = ?",
+                    (ts, fid),
+                )
+            else:
+                fid = self.db.execute(
+                    "INSERT INTO profile_facts (person_id, category, fact, fact_key, first_ts, last_ts, mentions) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 1)",
+                    (person_id, category, fact.strip(), key, ts, ts),
+                ).lastrowid
+            if segment_id is not None:
+                self.db.execute("INSERT OR IGNORE INTO profile_sources VALUES (?, ?)", (fid, segment_id))
+        return fid
+
+    def profile(self, person_id: int | None = None, *, everyone: bool = False) -> list[ProfileFact]:
+        """某个人（默认用户本人）的画像；everyone=True 时返回所有人的。"""
+        sql, args = "SELECT * FROM profile_facts", ()
+        if not everyone:
+            sql, args = sql + " WHERE IFNULL(person_id, 0) = IFNULL(?, 0)", (person_id,)
+        out = []
+        for r in self.db.execute(sql + " ORDER BY category, first_ts", args):
+            sources = [
+                x[0]
+                for x in self.db.execute(
+                    "SELECT segment_id FROM profile_sources WHERE fact_id = ?", (r["id"],)
+                )
+            ]
+            out.append(
+                ProfileFact(
+                    r["id"],
+                    r["person_id"],
+                    r["category"],
+                    r["fact"],
+                    r["first_ts"],
+                    r["last_ts"],
+                    r["mentions"],
+                    sources,
+                )
+            )
+        return out
+
+    # ---------- 事件线候选的查询（候选怎么取见 memory.candidates） ----------
+
+    def threads_with_people(self, person_ids: list[int]) -> list[int]:
+        if not person_ids:
+            return []
+        marks = ",".join("?" * len(person_ids))
+        return [
+            r[0]
+            for r in self.db.execute(
+                f"SELECT DISTINCT ts.thread_id FROM thread_segments ts JOIN segment_people sp ON sp.segment_id = ts.segment_id "
+                f"JOIN threads t ON t.id = ts.thread_id WHERE t.merged_into IS NULL AND sp.person_id IN ({marks})",
+                person_ids,
+            )
+        ]
+
+    def threads_mentioning(self, text: str, exclude_turns: list[int] = ()) -> list[int]:
+        """档案原文里出现过 text 的事件线（包括已经遗忘的片段，因为原文一直在）。"""
+        excl = ",".join("?" * len(exclude_turns)) or "NULL"
+        return [
+            r[0]
+            for r in self.db.execute(
+                "SELECT DISTINCT ts.thread_id FROM turns tu JOIN segment_turns st ON st.turn_id = tu.id "
+                "JOIN thread_segments ts ON ts.segment_id = st.segment_id JOIN threads t ON t.id = ts.thread_id "
+                f"WHERE t.merged_into IS NULL AND instr(tu.content, ?) > 0 AND tu.id NOT IN ({excl})",
+                (text, *exclude_turns),
+            )
+        ]
+
+    def important_threads(self, min_arousal: float, min_importance: float) -> list[int]:
+        """含有高情绪或高重要性片段的事件线（常驻候选），最近活跃的在前。"""
+        return [
+            r[0]
+            for r in self.db.execute(
+                "SELECT t.id FROM threads t JOIN thread_segments ts ON ts.thread_id = t.id "
+                "JOIN segments s ON s.id = ts.segment_id WHERE t.merged_into IS NULL "
+                "GROUP BY t.id HAVING MAX(s.arousal) >= ? OR MAX(s.importance) >= ? ORDER BY t.updated_ts DESC",
+                (min_arousal, min_importance),
+            )
+        ]
+
+    def thread_text(self, tid: int) -> str:
+        """事件线的文字：标题、摘要和所有片段标题，用于关键词检索。"""
+        t = self.get_thread(tid)
+        titles = [
+            r[0]
+            for r in self.db.execute(
+                "SELECT s.title FROM segments s JOIN thread_segments ts ON ts.segment_id = s.id WHERE ts.thread_id = ?",
+                (tid,),
+            )
+        ]
+        return " ".join([t.title, t.summary, *titles])
+
+
+def _fact_key(fact: str) -> str:
+    """合并用的键：去掉标点和空格。"""
+    return re.sub(r"[\s，。！？、,.!?；;：:\"'“”（）()]", "", fact)

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from contracts.llm import ChatModel
 from contracts.memory import Segment, days
 from memory.boundaries import conversation_closed
+from memory.candidates import select_candidates
 from memory.forgetting import Trace, clamp_adjustment, initial_half_life, relative_arousal
 from memory.prompts import (
     SEGMENT_SCHEMA,
@@ -29,13 +30,12 @@ from memory.prompts import (
 from memory.store import MemoryStore
 from memory.tuning import GlobalChange, adjust_global
 
-MAX_CANDIDATES = 20
-
 
 @dataclass
 class ConsolidationReport:
     segment_ids: list[int] = field(default_factory=list)
     threads: dict[int, ThreadDecision] = field(default_factory=dict)  # 片段 id → 归属决定
+    candidate_sources: dict[int, dict[int, list[str]]] = field(default_factory=dict)  # 片段 id → 候选及来源
     changes: list[tuple[str, str, GlobalChange]] = field(default_factory=list)
 
 
@@ -84,13 +84,17 @@ def consolidate(
             store.link_segments(prev.id, seg.id, "next")
         prev = seg
         report.segment_ids.append(seg.id)
+        for about, category, fact in d.facts:  # 稳定事实进用户画像：只合并、不改写、不遗忘
+            person = None if about in ("用户", "我", "他", "她") else store.upsert_person(about)
+            store.add_profile_fact(person, category, fact, seg.end_ts, seg.id)
 
     # 2. 挂到事件线
     for sid in report.segment_ids:
         seg = store.get_segment(sid)
         people = [store.person(p).name for p in seg.person_ids]
-        # 暂行：候选取最近活跃的 20 条；正式的五种来源并集见 01-记忆/事件切分.md
-        candidates = [store.thread_card(t) for t in store.live_threads()[:MAX_CANDIDATES]]
+        hits = select_candidates(store, seg)  # 五种来源取并集，最多 20 条
+        report.candidate_sources[sid] = hits
+        candidates = [store.thread_card(t) for t in hits]
         # 没有候选时也问一次：让潜意识模型给新事件线起一个概括这件事的标题
         r = model.chat(
             build_thread_prompt({"title": seg.title, "people": people}, candidates),

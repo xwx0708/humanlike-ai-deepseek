@@ -316,3 +316,27 @@ def test_apply_adjustments_caps_and_logs(store):
     logs = store.tuning_log("global")
     assert [c.applied for _, _, c in logs] == [True, False]
     assert store.load_global_knobs().base_half_life == pytest.approx(7.7)
+
+
+def test_parse_segments_facts():
+    ts = turns("记住：我对花生过敏，我妹妹叫小雨")
+    data = {
+        "segments": [
+            {
+                "messages": [1],
+                "title": "他说自己对花生过敏",
+                "people": [{"name": "妹妹", "aliases": []}],
+                "arousal": 0.1,
+                "valence": 0,
+                "importance": 1,
+                "emotion_reason": "",
+                "facts": [
+                    {"about": "用户", "category": "过敏与禁忌", "fact": "对花生过敏"},
+                    {"about": "妹妹", "category": "乱写的类别", "fact": "名叫小雨"},
+                    {"about": "", "category": "长期偏好", "fact": "  "},
+                ],
+            }
+        ]
+    }
+    [d] = parse_segments(data, ts)
+    assert d.facts == [("用户", "过敏与禁忌", "对花生过敏"), ("妹妹", "其他", "名叫小雨")]

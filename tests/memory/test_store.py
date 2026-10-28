@@ -138,3 +138,29 @@ def test_file_store_persists(tmp_path):
     s2 = MemoryStore(path)
     assert [t.content for t in s2.turns(c.id)] == ["记住这个"]
     s2.close()
+
+
+def test_profile_merges_but_never_rewrites(store):
+    mom = store.upsert_person("妈妈", ["我妈"])
+    a = store.add_profile_fact(None, "过敏与禁忌", "对花生过敏", 100)
+    b = store.add_profile_fact(None, "过敏与禁忌", "对花生过敏。", 200)  # 标点不同，算同一条
+    store.add_profile_fact(mom, "长期健康", "有哮喘", 150)
+    assert a == b
+    [fact] = store.profile()
+    assert (fact.fact, fact.mentions, fact.first_ts, fact.last_ts) == (
+        "对花生过敏",
+        2,
+        100,
+        200,
+    )  # 原文保留第一次的
+    assert [f.fact for f in store.profile(mom)] == ["有哮喘"]
+    assert len(store.profile(everyone=True)) == 2
+
+
+def test_profile_records_sources(store):
+    c = store.new_conversation(0)
+    t = store.add_turn(c.id, "user", "记住：我对花生过敏", 0)
+    seg = make_segment(store, c.id, [t], "他对花生过敏")
+    store.add_profile_fact(None, "过敏与禁忌", "对花生过敏", 0, seg.id)
+    store.add_profile_fact(None, "过敏与禁忌", "对花生过敏", 5, seg.id)
+    assert store.profile()[0].segment_ids == [seg.id]
