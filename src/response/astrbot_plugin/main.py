@@ -10,6 +10,7 @@
 """
 
 import asyncio
+import os
 import sys
 import time
 from pathlib import Path
@@ -25,7 +26,8 @@ class HumanlikePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
         self.config = config
-        root = Path(config.get("project_root") or DEFAULT_ROOT)
+        # 插件配置优先；Docker 部署时由环境变量给出（docker-compose.yml）
+        root = Path(config.get("project_root") or os.environ.get("HUMANLIKE_ROOT") or DEFAULT_ROOT)
         if str(root / "src") not in sys.path:
             sys.path.insert(0, str(root / "src"))
 
@@ -37,7 +39,7 @@ class HumanlikePlugin(Star):
         from response.persona import load_persona
         from response.responder import Responder
 
-        self.owner = str(config.get("owner_qq", "")).strip()
+        self.owner = str(config.get("owner_qq") or os.environ.get("HUMANLIKE_OWNER_QQ") or "").strip()
         self.store = MemoryStore()
         self.scanner = Scanner(self.store)
         self.responder = Responder(self.store, self.scanner, load_persona)
