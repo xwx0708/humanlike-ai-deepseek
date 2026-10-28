@@ -1,0 +1,14 @@
+{
+  "owner_qq": {
+    "description": "陪的那个人的 QQ 号",
+    "type": "string",
+    "hint": "只回复这个 QQ 号的私聊，其他人和群聊一律不回（D29）。",
+    "default": ""
+  },
+  "project_root": {
+    "description": "本项目所在文件夹",
+    "type": "string",
+    "hint": "例如 E:/ai工程。留空时按插件就在项目的 src/response/astrbot_plugin/ 里处理。",
+    "default": ""
+  }
+}
