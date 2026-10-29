@@ -40,6 +40,21 @@ services:
     networks:
       - humanlike
 
+  settings:
+    # 设置页（D40）：http://127.0.0.1:8791，改完重启 astrbot 生效
+    build:
+      context: .
+      dockerfile: deploy/astrbot.Dockerfile
+    restart: unless-stopped
+    working_dir: /humanlike/src
+    entrypoint: ["python", "-m", "settings_page", "--host", "0.0.0.0"]
+    ports:
+      - "127.0.0.1:8791:8791"
+    volumes:
+      - ./:/humanlike
+    networks:
+      - humanlike
+
 networks:
   humanlike:
     driver: bridge

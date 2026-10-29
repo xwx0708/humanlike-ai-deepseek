@@ -7,6 +7,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from runtime import config
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -18,9 +20,7 @@ class Settings:
     # 两个角色各自用哪家、哪个模型，可以随意搭配（决策 D13）
     thinking_provider: str = "deepseek"
     thinking_model: str = "deepseek-flash"
-    thinking_context_limit: int = (
-        1000000  # 思考模型的上下文上限（token）。熟悉期用到七成就启动记忆系统（D24）；deepseek-flash 约 100 万（D39），换模型时要改
-    )
+    thinking_context_limit: int = 1000000  # 思考模型的上下文上限（token）。熟悉期用到七成就启动记忆系统（D24）；deepseek-flash 约 100 万（D39），换模型时要改
     subconscious_provider: str = "ollama"
     subconscious_model: str = "qwen3.8:27b-q4_K_M"
     # 各家的连接设置，两个角色共用
@@ -54,14 +54,20 @@ def read_dotenv(path: Path) -> dict[str, str]:
 
 
 def load_settings(dotenv: Path = ROOT / ".env") -> Settings:
+    """优先级：环境变量 > 设置页（settings.json 的 models 分区，D40）> .env > 默认值。密钥只放 .env，不进设置页。"""
     file_values = read_dotenv(dotenv)
+    page = config.section("models")
     overrides = {}
     for name, default in Settings.__dataclass_fields__.items():
-        raw = os.environ.get(name.upper(), file_values.get(name.upper()))
+        raw = os.environ.get(name.upper())
+        if raw is None or raw == "":
+            raw = page.get(name)
+        if raw is None or raw == "":
+            raw = file_values.get(name.upper())
         if raw is None or raw == "":
             continue
         if isinstance(default.default, bool):
-            overrides[name] = raw.lower() in ("1", "true", "yes", "on")
+            overrides[name] = raw if isinstance(raw, bool) else str(raw).lower() in ("1", "true", "yes", "on")
         else:
             overrides[name] = type(default.default)(raw)
     return Settings(**overrides)

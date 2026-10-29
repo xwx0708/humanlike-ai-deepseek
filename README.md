@@ -37,6 +37,8 @@
 
 对话平台是 QQ：[NapCat](https://github.com/NapNeko/NapCatQQ) 登录 QQ 小号，经 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 接到本项目的插件。
 
+介绍文章：[一个会遗忘的 AI：记忆系统的设计与实现](docs/记忆系统介绍.md)
+
 ## 安装（Docker 一键部署）
 
 需要：Docker；本机装好 [Ollama](https://ollama.com) 并有显卡（潜意识模型约十几 GB）；一个思考模型的 API 密钥；一个 QQ 小号。
@@ -60,6 +62,8 @@ docker compose up -d            # 下载并启动 NapCat、AstrBot 的官方镜�
    - [mrqy1/astrbot-persona](https://github.com/mrqy1/astrbot-persona)：基于心理学框架的人设模板，带可叠加的性格模块（MIT）
 
    如果觉得好用，记得去给原作者点个 ⭐ Star。
+
+4. 打开 `http://127.0.0.1:8791`（设置页）调整参数：遗忘曲线、扫描与浮现、启动比例、模型、数据文件夹等。每项旁的 ⓘ 悬停可看解释；也能关闭功能、自定义触发说法。改完重启 AstrBot 生效：`docker compose restart astrbot`。
 
 完整步骤、手动部署和装好后要核对的事见 [03-回应/部署.md](03-回应/部署.md)。
 

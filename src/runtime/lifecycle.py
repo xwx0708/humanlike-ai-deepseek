@@ -13,11 +13,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from runtime import config
+
 FAMILIAR = "熟悉期"
 RUNNING = "运行期"
-START_RATIO = 0.7  # 上下文用到多少比例时启动（用户定：约 70%）
+START_RATIO = config.value("lifecycle", "start_ratio", 0.7)  # 上下文用到多少比例时启动（用户定：约 70%）
 
-DEFAULT_PATH = Path(__file__).resolve().parents[2] / "data" / "lifecycle.json"
+DEFAULT_PATH = config.data_dir() / "lifecycle.json"
 
 
 @dataclass

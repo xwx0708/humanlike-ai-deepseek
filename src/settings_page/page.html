@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设置 · 类人 AI</title>
+<style>
+  :root {
+    --bg: #f6f7f8; --panel: #ffffff; --ink: #1d2329; --ink-2: #4a545e; --muted: #7c8792; --line: #e2e6ea;
+    --accent: #2f6f9f; --accent-soft: #e6f0f7; --changed: #b5651d; --off: #a3acb5;
+    --tip-bg: #1d2329; --tip-ink: #f1f4f6;
+    font-family: "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111518; --panel: #171c20; --ink: #e5eaee; --ink-2: #b9c2ca; --muted: #85909a; --line: #2a3238;
+            --accent: #7fb4dc; --accent-soft: #1d2b36; --changed: #e0a56a; --off: #5c666f; --tip-bg: #e5eaee; --tip-ink: #111518; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.6; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
+           display: flex; align-items: center; gap: 16px; padding: 12px 28px; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 700; }
+  header .path { color: var(--muted); font-size: 12.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button { font: inherit; border-radius: 6px; padding: 6px 14px; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { button.primary { color: #0e1316; } }
+  button:focus-visible, input:focus-visible, select:focus-visible, .q:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #notice { margin: 0 28px; padding: 10px 14px; border-radius: 6px; background: var(--accent-soft); color: var(--ink); display: none; }
+  #notice.show { display: block; margin-top: 14px; }
+  #notice code { font-size: 12.5px; }
+  .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; padding: 18px 28px 80px; max-width: 1180px; }
+  nav { position: sticky; top: 70px; align-self: start; display: flex; flex-direction: column; }
+  nav a { color: var(--ink-2); text-decoration: none; padding: 4px 10px; border-left: 2px solid transparent; font-size: 13.5px; }
+  nav a:hover { color: var(--ink); border-left-color: var(--line); }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px 22px 8px; margin-bottom: 18px; scroll-margin-top: 80px; }
+  section h2 { font-size: 16px; margin: 0 0 4px; display: flex; align-items: center; gap: 6px; }
+  section > p { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+  .row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) auto; gap: 14px; align-items: center;
+         padding: 9px 0; border-top: 1px solid var(--line); }
+  .row label { display: flex; align-items: center; gap: 6px; color: var(--ink); }
+  .row.changed label { color: var(--changed); }
+  .ctl { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .ctl input[type=range] { flex: 1; min-width: 80px; accent-color: var(--accent); }
+  .ctl input[type=number] { width: 110px; }
+  .ctl input[type=text] { width: 100%; }
+  input[type=number], input[type=text], select { font: inherit; padding: 4px 8px; border-radius: 5px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+  .unit { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+  .dflt { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .reset { border: none; background: none; color: var(--muted); padding: 2px 4px; font-size: 13px; visibility: hidden; }
+  .row.changed .reset { visibility: visible; }
+
+  /* 圆圈问号：悬停或聚焦时浮现解释 */
+  .q { position: relative; display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+       border: 1px solid var(--muted); color: var(--muted); font-size: 11px; line-height: 1; cursor: help; flex: none; font-weight: 400; }
+  .q::after { content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-20%);
+              width: max-content; max-width: 360px; white-space: normal; padding: 8px 10px; border-radius: 6px;
+              background: var(--tip-bg); color: var(--tip-ink); font-size: 12.5px; line-height: 1.6; text-align: left;
+              opacity: 0; pointer-events: none; transition: opacity .12s; z-index: 10; }
+  .q:hover::after, .q:focus::after { opacity: 1; }
+
+  .switch { position: relative; width: 36px; height: 20px; flex: none; }
+  .switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .switch span { position: absolute; inset: 0; border-radius: 10px; background: var(--off); transition: background .15s; pointer-events: none; }
+  .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(16px); }
+  .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 12px; border: 1px solid var(--line);
+          background: var(--bg); font-size: 13px; cursor: pointer; user-select: none; }
+  .chip.off { color: var(--off); text-decoration: line-through; }
+  .chip.custom { border-color: var(--accent); color: var(--accent); }
+  .chip.custom b { font-weight: 400; margin-left: 2px; }
+  .add { display: flex; gap: 6px; margin-top: 8px; }
+  .add input { width: 180px; }
+  .wordrow { grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); align-items: start; }
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; padding: 14px 16px 60px; }
+    nav { display: none; }
+    .row { grid-template-columns: 1fr; gap: 6px; }
+    header { padding: 10px 16px; flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>设置</h1>
+  <span class="path" id="path"></span>
+  <button id="resetAll" type="button">全部恢复默认</button>
+  <button id="save" class="primary" type="button">保存</button>
+</header>
+<div id="notice" role="status"></div>
+<div class="layout">
+  <nav id="nav" aria-label="设置分区"></nav>
+  <main id="main"></main>
+</div>
+
+<script>
+const $ = (sel, el = document) => el.querySelector(sel);
+const h = (tag, attrs = {}, ...kids) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') el.className = v; else if (k.startsWith('on')) el.addEventListener(k.slice(2), v); else el.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) el.append(k);
+  return el;
+};
+const q = tip => h('span', { class: 'q', tabindex: '0', 'data-tip': tip, 'aria-label': tip, role: 'note' }, '?');
+
+let SCHEMA, state;   // state：{分区: {参数: 值}, features: {...}, keywords: {...}}
+
+function fmt(v) { return typeof v === 'number' ? String(+v.toFixed(6)) : String(v); }
+
+function numberRow(secId, f) {
+  const cur = state[secId]?.[f.key];
+  const val = cur ?? f.default;
+  const row = h('div', { class: 'row' });
+  const num = h('input', { type: 'number', step: f.step, 'aria-label': f.label });
+  if (f.min != null) num.min = f.min; if (f.max != null) num.max = f.max;
+  num.value = val;
+  const ctl = h('div', { class: 'ctl' });
+  let range = null;
+  if (f.min != null && f.max != null) {
+    range = h('input', { type: 'range', min: f.min, max: f.max, step: f.step, 'aria-hidden': 'true', tabindex: '-1' });
+    range.value = val;
+    range.addEventListener('input', () => { num.value = range.value; set(+range.value); });
+    ctl.append(range);
+  }
+  ctl.append(num);
+  if (f.unit) ctl.append(h('span', { class: 'unit' }, f.unit));
+  const set = v => {
+    if (Number.isNaN(v)) return;
+    state[secId] ??= {};
+    if (v === f.default) delete state[secId][f.key]; else state[secId][f.key] = v;
+    row.classList.toggle('changed', v !== f.default);
+  };
+  num.addEventListener('input', () => { if (range) range.value = num.value; set(f.type === 'int' ? Math.round(+num.value) : +num.value); });
+  const reset = h('button', { class: 'reset', type: 'button', title: '恢复默认', onclick: () => { num.value = f.default; if (range) range.value = f.default; set(f.default); } }, '↺');
+  row.append(h('label', {}, f.label, q(f.help)), ctl, h('span', { class: 'dflt' }, `默认 ${fmt(f.default)}`, reset));
+  row.classList.toggle('changed', cur != null && cur !== f.default);
+  return row;
+}
+
+function inputRow(secId, f) {
+  const cur = state[secId]?.[f.key];
+  const val = cur ?? f.default;
+  const row = h('div', { class: 'row' });
+  let el;
+  if (f.type === 'select') {
+    el = h('select', { 'aria-label': f.label }, f.options.map((o, i) => h('option', { value: o }, f.option_labels?.[i] ?? String(o))));
+    el.value = String(val);
+  } else if (f.type === 'bool') {
+    el = h('input', { type: 'checkbox', 'aria-label': f.label }); el.checked = !!val;
+  } else {
+    el = h('input', { type: 'text', 'aria-label': f.label, placeholder: String(f.default) }); el.value = val;
+  }
+  const read = () => f.type === 'bool' ? el.checked : f.type === 'select' ? (typeof f.default === 'number' ? +el.value : el.value) : el.value.trim();
+  const set = v => {
+    state[secId] ??= {};
+    if (v === f.default || v === '') delete state[secId][f.key]; else state[secId][f.key] = v;
+    row.classList.toggle('changed', v !== f.default && v !== '');
+  };
+  el.addEventListener(f.type === 'text' || f.type === 'path' ? 'input' : 'change', () => set(read()));
+  const reset = h('button', { class: 'reset', type: 'button', title: '恢复默认', onclick: () => {
+    if (f.type === 'bool') el.checked = !!f.default; else el.value = String(f.default); set(f.default);
+  } }, '↺');
+  const dflt = f.type === 'select' && f.option_labels ? f.option_labels[f.options.indexOf(f.default)] : (f.default === '' ? '（空）' : fmt(f.default));
+  row.append(h('label', {}, f.label, q(f.help)), h('div', { class: 'ctl' }, el), h('span', { class: 'dflt' }, `默认 ${dflt}`, reset));
+  row.classList.toggle('changed', cur != null && cur !== f.default);
+  return row;
+}
+
+function featureRow(f) {
+  const on = state.features?.[f.key] !== false;
+  const box = h('input', { type: 'checkbox', role: 'switch', 'aria-label': f.label }); box.checked = on;
+  const row = h('div', { class: 'row' });
+  box.addEventListener('change', () => {
+    state.features ??= {};
+    if (box.checked) delete state.features[f.key]; else state.features[f.key] = false;
+    row.classList.toggle('changed', !box.checked);
+  });
+  row.append(h('label', {}, f.label, q(f.help)), h('div', { class: 'ctl' }, h('label', { class: 'switch' }, box, h('span'))), h('span', { class: 'dflt' }, '默认 开启'));
+  row.classList.toggle('changed', !on);
+  return row;
+}
+
+function wordRow(w) {
+  state.keywords ??= {};
+  const cur = state.keywords[w.key] ?? { add: [], disabled: [] };
+  state.keywords[w.key] = cur;
+  cur.add ??= []; cur.disabled ??= [];
+  const chips = h('div', { class: 'chips' });
+  const draw = () => {
+    chips.replaceChildren(
+      ...w.default.map(word => {
+        const off = cur.disabled.includes(word);
+        return h('span', { class: 'chip' + (off ? ' off' : ''), role: 'button', tabindex: '0', title: off ? '点击启用' : '点击停用',
+          onclick: () => { cur.disabled = off ? cur.disabled.filter(x => x !== word) : [...cur.disabled, word]; draw(); },
+          onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.target.click(); } } }, word);
+      }),
+      ...cur.add.map(word => h('span', { class: 'chip custom', role: 'button', tabindex: '0', title: '点击删除',
+        onclick: () => { cur.add = cur.add.filter(x => x !== word); draw(); },
+        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.target.click(); } } }, word, h('b', {}, '×'))),
+    );
+  };
+  draw();
+  const input = h('input', { type: 'text', placeholder: '加一个自己的说法', 'aria-label': `${w.label}：添加说法` });
+  const add = () => {
+    const v = input.value.trim();
+    if (v && !w.default.includes(v) && !cur.add.includes(v)) cur.add.push(v);
+    input.value = ''; draw();
+  };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') add(); });
+  return h('div', { class: 'row wordrow' }, h('label', {}, w.label, q(w.help)),
+    h('div', {}, chips, h('div', { class: 'add' }, input, h('button', { type: 'button', onclick: add }, '添加'))));
+}
+
+function render() {
+  const main = $('#main'), nav = $('#nav');
+  main.replaceChildren(); nav.replaceChildren();
+  for (const sec of SCHEMA.sections) {
+    const el = h('section', { id: sec.id }, h('h2', {}, sec.title, q(sec.help)), h('p', {}, sec.help));
+    for (const f of sec.fields) el.append(f.type === 'int' || f.type === 'float' ? numberRow(sec.id, f) : inputRow(sec.id, f));
+    main.append(el); nav.append(h('a', { href: '#' + sec.id }, sec.title));
+  }
+  const feats = h('section', { id: 'features' }, h('h2', {}, '功能开关', q('关闭某项功能后，对应的行为不再发生；参数保留。')),
+    h('p', {}, '可以单独停用任一功能。'));
+  for (const f of SCHEMA.features) feats.append(featureRow(f));
+  main.append(feats); nav.append(h('a', { href: '#features' }, '功能开关'));
+  const words = h('section', { id: 'keywords' }, h('h2', {}, '关键词表', q('用户对记忆的要求按关键词识别（D29）。点击默认词可停用，输入框可添加自己的说法。')),
+    h('p', {}, '点击默认的词停用它（显示删除线），在下方添加自己的说法；自定义的词点击即可删除。'));
+  for (const w of SCHEMA.word_lists) words.append(wordRow(w));
+  main.append(words); nav.append(h('a', { href: '#keywords' }, '关键词表'));
+}
+
+function notice(html) { const n = $('#notice'); n.innerHTML = html; n.classList.add('show'); }
+
+async function load() {
+  const r = await fetch('/api/settings');
+  const data = await r.json();
+  SCHEMA = data.schema; state = data.values || {};
+  $('#path').textContent = '设置文件：' + data.path;
+  render();
+}
+
+$('#save').addEventListener('click', async () => {
+  const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state) });
+  if (!r.ok) { notice('保存失败：' + (await r.json()).error); return; }
+  const data = await r.json();
+  state = data.saved; render();
+  notice(`已保存到 <code>${data.path}</code>。重启后生效：Docker 部署运行 <code>docker compose restart astrbot</code>。`);
+});
+$('#resetAll').addEventListener('click', () => {
+  if (!confirm('把所有设置恢复为默认值？保存后才会写入文件。')) return;
+  state = {}; render(); notice('已恢复为默认值，点"保存"写入文件。');
+});
+load().catch(e => notice('读取设置失败：' + e.message));
+</script>
+</body>
+</html>
