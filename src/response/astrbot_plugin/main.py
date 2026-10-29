@@ -83,10 +83,11 @@ class HumanlikePlugin(Star):
         if not self.owner or event.get_sender_id() != self.owner:
             return  # 只陪一个人（D29）
         text = event.message_str.strip()
-        if not text:
-            return  # 图片、语音等非文字消息怎么处理还没定（待议问题 11）
+        attachments = await self._attachments(event)
+        if not text and not attachments:
+            return  # 表情、戳一戳等没有文字也没有文件的消息，暂不回
         self.store.set_meta("owner_umo", event.unified_msg_origin)  # 以后主动发消息用（D29）
-        prompt = self.responder.on_user_message(text, time.time())
+        prompt = self.responder.on_user_message(text, time.time(), attachments)
         try:
             provider_id = await self.context.get_current_chat_provider_id(event.unified_msg_origin)
             resp = await self.context.tool_loop_agent(
@@ -95,6 +96,7 @@ class HumanlikePlugin(Star):
                 prompt=prompt.prompt,
                 system_prompt=prompt.system,
                 contexts=prompt.contexts,
+                image_urls=prompt.image_paths or None,
                 tools=await self._tools(event),
             )
         except Exception:  # noqa: BLE001
@@ -106,6 +108,29 @@ class HumanlikePlugin(Star):
         used = resp.usage.input_other + resp.usage.input_cached if resp.usage else None
         self.responder.on_reply(reply, time.time(), used)
         yield event.plain_result(reply)
+
+    async def _attachments(self, event: AstrMessageEvent) -> list:
+        """这条消息里的图片和文件（D38）：下载到本地，图片交给模型看，文件提取成文字。MP4 等视频、音频不支持。"""
+        import astrbot.api.message_components as Comp
+
+        from response.attachments import read_file, read_image, unsupported
+
+        out = []
+        for comp in event.message_obj.message:
+            try:
+                if isinstance(comp, Comp.Image):
+                    out.append(read_image(await comp.convert_to_file_path(), "图片"))
+                elif isinstance(comp, Comp.File):
+                    name = comp.name or "文件"
+                    out.append(read_file(await comp.get_file(), name))
+                elif isinstance(comp, Comp.Video):
+                    out.append(unsupported("视频", "视频还看不了"))
+                elif isinstance(comp, Comp.Record):
+                    out.append(unsupported("语音", "语音还听不了"))
+            except Exception as e:  # noqa: BLE001  下载失败等，如实告诉模型
+                logger.exception("[类人AI] 读取附件失败")
+                out.append(unsupported(getattr(comp, "name", "") or "附件", f"没拿到（{type(e).__name__}）"))
+        return out
 
     async def _tools(self, event: AstrMessageEvent):
         """交给模型的工具：AstrBot 登记的全部工具（含 MCP 和本插件的），再加上 AstrBot 自带的联网搜索（D36）。

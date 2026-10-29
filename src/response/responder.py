@@ -10,7 +10,7 @@
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from memory.archive import forget_thread, search_archive
@@ -21,6 +21,7 @@ from memory.resident import resident_block
 from memory.scanner import Scanner, focus_of, search_memory
 from memory.store import MemoryStore
 from response import requests
+from response.attachments import Attachment
 from runtime.lifecycle import FAMILIAR, Lifecycle
 
 SURFACED_HEADER = (
@@ -38,6 +39,7 @@ class Prompt:
     notes: list[str] = field(
         default_factory=list
     )  # 此刻要注意的事（已经放进 system，单独留一份便于测试和日志）
+    image_paths: list[str] = field(default_factory=list)  # 这一轮对方发来的图片，交给模型看（D38）
 
 
 class Responder:
@@ -53,16 +55,20 @@ class Responder:
         self.persona = persona
         self.phase = phase  # 生命周期由后台任务推进，每轮重新读
 
-    def on_user_message(self, text: str, ts: float) -> Prompt:
-        turn = ingest_turn(self.store, "user", text, ts)
-        notes = self._handle_requests(text, turn.id, ts)
+    def on_user_message(self, text: str, ts: float, attachments: Sequence[Attachment] = ()) -> Prompt:
+        """attachments：对方这一条发来的文件和图片（D38）。全文只放进这一轮的提示词；记忆里只记发来了什么和开头一段。"""
+        remembered = _join_lines(text, *(a.memory_note() for a in attachments))
+        turn = ingest_turn(self.store, "user", remembered, ts)
+        notes = self._handle_requests(text, turn.id, ts)  # 对记忆的要求只看对方打的字
+        prompt_text = _join(text, *(a.prompt_block() for a in attachments))
+        images = [a.image_path for a in attachments if a.kind == "图片"]
         persona = self.persona()
         if self.phase() == FAMILIAR:
             history = [t for t in self.store.all_turns() if t.id != turn.id]
             contexts = [{"role": t.role, "content": t.content} for t in history]
-            return Prompt(_join(persona, _notes_block(notes)), contexts, text, notes)
+            return Prompt(_join(persona, _notes_block(notes)), contexts, prompt_text, notes, images)
         # 运行期：话题和专注程度交给扫描器，下一次扫描按新的话题充电、按专注程度定温度（D26）
-        self.scanner.set_topic(text)
+        self.scanner.set_topic(remembered)
         self.scanner.set_focus(focus_of(self.store, turn.conversation_id))
         fresh = [m for m in fresh_memories(self.store, ts) if m.turn.id != turn.id]  # 这一条本身单独给
         surfaced = drop_fresh(self.store, self.scanner.buffer, fresh)
@@ -73,7 +79,7 @@ class Responder:
             fresh_block(fresh),
             _notes_block(notes),
         )
-        return Prompt(system, [], text, notes)
+        return Prompt(system, [], prompt_text, notes, images)
 
     def on_reply(self, text: str, ts: float, prompt_tokens: int | None = None) -> None:
         """思考模型回复以后：存进记忆；回报实际用掉的上下文（熟悉期据此判断何时启动，D24）。"""
@@ -146,6 +152,10 @@ def _surfaced_block(items: list) -> str:
 
 def _notes_block(notes: list[str]) -> str:
     return "此刻要注意的事：\n" + "\n".join(f"- {n}" for n in notes) if notes else ""
+
+
+def _join_lines(*parts: str) -> str:
+    return "\n".join(p for p in parts if p)
 
 
 def _join(*parts: str) -> str:
