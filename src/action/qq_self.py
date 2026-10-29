@@ -14,6 +14,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from runtime import config
 from runtime.clock import Clock, SystemClock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,17 +34,25 @@ class Limit:
 
 
 # 暂定，偏严（用户要求"严格限制频率"）；以后测试时再调
+def _limit(key: str, times: int, days: float) -> Limit:
+    return Limit(
+        config.value("action", f"{key}_times", times), config.value("action", f"{key}_days", days) * DAY
+    )
+
+
 LIMITS = {
-    AVATAR: Limit(1, 7 * DAY),
-    NICKNAME: Limit(1, 7 * DAY),
-    SIGNATURE: Limit(1, 3 * DAY),
-    POST: Limit(1, DAY),
-    DELETE: Limit(2, DAY),
+    AVATAR: _limit("avatar", 1, 7),
+    NICKNAME: _limit("nickname", 1, 7),
+    SIGNATURE: _limit("signature", 1, 3),
+    POST: _limit("post", 1, 1),
+    DELETE: _limit("delete", 2, 1),
 }
 MAX_CHARS = {NICKNAME: 20, SIGNATURE: 60, POST: 500}
 MAX_IMAGES = 4  # 一条说说最多配几张图（暂定）
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".gif", ".webp")
-VISIBLE_TO_FRIENDS = 4  # 说说默认好友可见（暂定）；1 所有人、4 好友、64 仅自己
+VISIBLE_TO_FRIENDS = config.value(
+    "action", "post_visibility", 4
+)  # 说说默认好友可见（暂定）；1 所有人、4 好友、64 仅自己
 
 
 class Refused(Exception):
@@ -61,12 +70,12 @@ class Call:
 class QQSelf:
     def __init__(
         self,
-        log_path: Path = ROOT / "data" / "action_log.json",
-        images_dir: Path = ROOT / "data" / "images",
+        log_path: Path | None = None,
+        images_dir: Path | None = None,
         clock: Clock | None = None,
     ):
-        self.log_path = Path(log_path)
-        self.images_dir = Path(images_dir)
+        self.log_path = Path(log_path or config.data_dir() / "action_log.json")
+        self.images_dir = Path(images_dir or config.data_dir() / "images")
         self.clock = clock or SystemClock()
 
     # ---------- 生成调用（先检查，不记录） ----------
