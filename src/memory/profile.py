@@ -63,3 +63,16 @@ def resolve_conflict(
     else:
         outcome = NOTHING
     return ConflictResult(outcome, firm, probs, roll)
+
+
+def take_evocations(store) -> list[str]:
+    """被唤起、等待浮现的旧事实（D16"唤起"：两条都留，旧的等待浮现）。返回给思考模型看的句子，并标为已浮现，
+    所以每条只浮现一次。由回应模块在运行期每轮调用，放进浮现区。"""
+    out = []
+    for e in store.pending_evocations():
+        old = store.fact_text(e["fact_id"])
+        new = store.fact_text(e["trigger_fact_id"]) if e["trigger_fact_id"] else None
+        if old:
+            out.append(f"你想起他以前说过：{old}" + (f"（和他后来说的「{new}」不一样）" if new else ""))
+        store.consume_evocation(e["id"])
+    return out

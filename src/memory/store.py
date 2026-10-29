@@ -821,6 +821,10 @@ class MemoryStore:
             )
         return out
 
+    def fact_text(self, fact_id: int) -> str | None:
+        r = self.db.execute("SELECT fact FROM profile_facts WHERE id = ?", (fact_id,)).fetchone()
+        return r[0] if r else None
+
     def archive_profile_fact(self, old_id: int, new_id: int, ts: float) -> None:
         """覆盖：旧事实移进档案（不删除），记下是哪条新事实覆盖了它。"""
         with self.db:
