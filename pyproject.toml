@@ -7,6 +7,11 @@ license = "AGPL-3.0-or-later"  # D33：AstrBot 是 AGPL-3.0，插件在它里面
 license-files = ["LICENSE"]
 dependencies = [
     "jieba>=0.42",  # 事件线候选的关键词检索（用户方案：jieba 分词 + BM25）
+    # 读用户发来的文件（D38）
+    "pypdf>=5",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "python-pptx>=1.0",
 ]
 
 [tool.pytest.ini_options]
