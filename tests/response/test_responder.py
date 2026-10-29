@@ -173,3 +173,12 @@ def test_archive_only_searched_when_asked(store):
     assert r.on_user_message("我妈之前住院是怎么回事", 86400).notes == []  # 没要求，不翻（D26）
     p = r.on_user_message("帮我翻翻档案，我妈住院那次", 86400 + MIN)
     assert "他妈妈住院" in p.notes[0] and "我妈住院了" in p.notes[0]
+
+
+def test_own_actions_are_remembered(store):
+    """D35：AI 自己做的事（发说说等）作为它说过的一句话记进记忆，之后在新鲜记忆里能看到。"""
+    r = responder(store)
+    r.on_user_message("今天好无聊", 0)
+    r.on_action("我在 QQ 空间发了一条说说（好友可见）：摸鱼中", 30)
+    p = r.on_user_message("你刚才干嘛了", 60)
+    assert "我：（我在 QQ 空间发了一条说说（好友可见）：摸鱼中）" in p.system

@@ -81,6 +81,10 @@ class Responder:
         if prompt_tokens:
             report_context_used(self.store, prompt_tokens)
 
+    def on_action(self, note: str, ts: float) -> None:
+        """AI 自己做了一件事（换头像、发说说等，D35）：作为它自己说过的一句话记进记忆，以后能想起来。"""
+        ingest_turn(self.store, "assistant", f"（{note}）", ts)
+
     # ---------- 用户对记忆的要求（D29：关键词识别） ----------
 
     def _handle_requests(self, text: str, turn_id: int, ts: float) -> list[str]:

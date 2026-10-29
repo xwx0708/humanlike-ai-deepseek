@@ -3,6 +3,9 @@
 - 插件接管整轮（D29）：收到消息后由本项目组织提示词，再用 AstrBot 里配置的思考模型回答，跳过 AstrBot 默认流程。
 - 只陪一个人、不考虑群聊（D29）：只回复配置里那个 QQ 号的私聊，其他私聊和群聊一律不回。
 - 行动用 AstrBot 自带的 MCP（D29）：把 AstrBot 登记的全部工具（含 MCP）交给模型，用 tool_loop_agent 跑工具调用。
+- 小d 自己的事（D35）：换头像、改昵称和签名、发说说、删说说登记成工具，由模型自己决定做不做；
+  频率、长度、图片来源由 action.qq_self 把关，做成以后记进记忆。
+- 联网搜索（D36）：用 AstrBot 自带的，在它网页里开启、选来源、填密钥；插件把它加进工具。
 - 和 AstrBot 合成一个进程（D29）：记忆的后台任务每分钟在另一个线程里跑一次；扫描器每分钟扫一格。
 
 安装方法见 03-回应/部署.md。这个文件只能在 AstrBot 里运行，没有单元测试；AstrBot 的接口按 2026-10-28 的文档和源码写，
@@ -31,6 +34,7 @@ class HumanlikePlugin(Star):
         if str(root / "src") not in sys.path:
             sys.path.insert(0, str(root / "src"))
 
+        from action.qq_self import QQSelf
         from llm import subconscious_model
         from llm.settings import load_settings
         from memory.scanner import Scanner
@@ -43,6 +47,7 @@ class HumanlikePlugin(Star):
         self.store = MemoryStore()
         self.scanner = Scanner(self.store)
         self.responder = Responder(self.store, self.scanner, load_persona)
+        self.qq = QQSelf()
         # 潜意识模型仍在本项目 .env；思考模型用 AstrBot 里填的（D29）
         self.scheduler = make_scheduler(subconscious_model(), load_settings().thinking_context_limit)
         self._task: asyncio.Task | None = None
@@ -90,7 +95,7 @@ class HumanlikePlugin(Star):
                 prompt=prompt.prompt,
                 system_prompt=prompt.system,
                 contexts=prompt.contexts,
-                tools=self.context.get_llm_tool_manager().get_full_tool_set(),
+                tools=await self._tools(event),
             )
         except Exception:  # noqa: BLE001
             logger.exception("[类人AI] 调用思考模型失败")
@@ -101,6 +106,102 @@ class HumanlikePlugin(Star):
         used = resp.usage.input_other + resp.usage.input_cached if resp.usage else None
         self.responder.on_reply(reply, time.time(), used)
         yield event.plain_result(reply)
+
+    async def _tools(self, event: AstrMessageEvent):
+        """交给模型的工具：AstrBot 登记的全部工具（含 MCP 和本插件的），再加上 AstrBot 自带的联网搜索（D36）。
+        联网搜索只在 AstrBot 默认流程里才会加，插件接管整轮后要自己补；是否开启、用哪家，按 AstrBot 网页里的设置。"""
+        tools = self.context.get_llm_tool_manager().get_full_tool_set()
+        try:
+            from types import SimpleNamespace
+
+            from astrbot.core.astr_main_agent import _apply_web_search_tools
+
+            await _apply_web_search_tools(event, SimpleNamespace(func_tool=tools), self.context)
+        except Exception:  # noqa: BLE001  AstrBot 改了内部接口时退回不带搜索，不影响聊天
+            logger.exception("[类人AI] 加联网搜索工具失败，这一轮不带搜索")
+        return tools
+
+    # ---------- 小d 自己的事（D35：严格限制频率，可以自己决定） ----------
+
+    async def _do(self, event: AstrMessageEvent, build) -> str:
+        from action.qq_self import Refused
+
+        bot = getattr(event, "bot", None)
+        if bot is None or not hasattr(bot, "call_action"):
+            return "没做成：这件事只能在 QQ 上做"
+        try:
+            call = build(self.qq)
+        except Refused as e:
+            return f"没做成：{e}"
+        try:
+            result = await bot.call_action(call.action, **call.params)
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"[类人AI] {call.kind}失败")
+            return f"没做成：QQ 那边出错了（{e}）"
+        self.qq.record(call, result if isinstance(result, dict) else None)
+        self.responder.on_action(call.note, time.time())
+        logger.info(f"[类人AI] {call.note}")
+        return f"做好了：{call.note}"
+
+    @filter.llm_tool(name="qq_list_images")
+    async def qq_list_images(self, event: AstrMessageEvent):
+        """列出可以用来换头像、给说说配图的图片文件名。"""
+        names = self.qq.list_images()
+        return "能用的图片：" + "、".join(names) if names else "图片文件夹里还没有图"
+
+    @filter.llm_tool(name="qq_set_avatar")
+    async def qq_set_avatar(self, event: AstrMessageEvent, image: str):
+        """换自己的 QQ 头像。想换就可以自己决定换，但一周最多一次。
+
+        Args:
+            image(string): 图片文件名，只能用 qq_list_images 列出的
+        """
+        return await self._do(event, lambda q: q.set_avatar(image))
+
+    @filter.llm_tool(name="qq_set_nickname")
+    async def qq_set_nickname(self, event: AstrMessageEvent, nickname: str):
+        """改自己的 QQ 昵称。一周最多一次。
+
+        Args:
+            nickname(string): 新昵称，最多 20 个字
+        """
+        return await self._do(event, lambda q: q.set_nickname(nickname))
+
+    @filter.llm_tool(name="qq_set_signature")
+    async def qq_set_signature(self, event: AstrMessageEvent, signature: str):
+        """改自己的 QQ 个性签名。三天最多一次。
+
+        Args:
+            signature(string): 新签名，最多 60 个字
+        """
+        return await self._do(event, lambda q: q.set_signature(signature))
+
+    @filter.llm_tool(name="qq_post_moment")
+    async def qq_post_moment(self, event: AstrMessageEvent, content: str, images: str = ""):
+        """在自己的 QQ 空间发一条说说（好友可见）。想分享心情或日常时可以自己决定发，但一天最多一条。
+
+        Args:
+            content(string): 说说正文，最多 500 字
+            images(string): 配图文件名，多张用逗号分开，只能用 qq_list_images 列出的；不配图就留空
+        """
+        names = [i.strip() for i in images.replace("，", ",").split(",") if i.strip()]
+        return await self._do(event, lambda q: q.post(content, names))
+
+    @filter.llm_tool(name="qq_delete_moment")
+    async def qq_delete_moment(self, event: AstrMessageEvent, tid: str):
+        """删掉自己之前发的一条说说。一天最多两次，只能删自己发的。
+
+        Args:
+            tid(string): 说说编号；不知道编号时先留空调用一次，会列出自己发过的说说
+        """
+        if not tid.strip():
+            posts = self.qq.my_posts()
+            return (
+                "我发过的说说：" + "；".join(f"{p['tid']}：{p['content'][:30]}" for p in posts)
+                if posts
+                else "我还没发过说说"
+            )
+        return await self._do(event, lambda q: q.delete_post(tid.strip()))
 
     async def terminate(self):
         if self._task is not None:
