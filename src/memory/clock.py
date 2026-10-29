@@ -13,6 +13,7 @@ from bisect import bisect_right
 from dataclasses import dataclass
 
 from contracts.memory import SECONDS_PER_DAY
+from runtime import config
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ class ClockKnobs:
     freeze_after: float = 24 * 3600  # 秒：减速多久后停止流动（用户说"超过某个时限"，数值暂定）
 
 
-DEFAULT_CLOCK = ClockKnobs()
+DEFAULT_CLOCK = config.knobs(ClockKnobs(), "clock")
 
 
 def clock_of(store, k: ClockKnobs = DEFAULT_CLOCK) -> "MemoryClock":

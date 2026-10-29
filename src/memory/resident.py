@@ -17,6 +17,7 @@ from contracts.memory import Segment
 from memory.clock import MemoryClock, clock_of
 from memory.forgetting import strength
 from memory.store import MemoryStore
+from runtime import config
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,7 @@ class ResidentKnobs:
     repeated_conversations: int = 3  # 在至少几场不同的对话里被提及，算"多次反复提及"（暂定）
 
 
-DEFAULT_KNOBS = ResidentKnobs()
+DEFAULT_KNOBS = config.knobs(ResidentKnobs(), "resident")
 
 
 def score(stats: dict, idle_days: float, k: ResidentKnobs = DEFAULT_KNOBS) -> float:

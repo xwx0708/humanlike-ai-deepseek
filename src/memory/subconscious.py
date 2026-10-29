@@ -43,6 +43,7 @@ from memory.store import MemoryStore
 from memory.sweep import SweepReport, sweep
 from memory.tokens import estimate_tokens
 from memory.tuning import GlobalChange, adjust_global
+from runtime import config
 
 
 @dataclass
@@ -202,7 +203,9 @@ def consolidate(
     _summarize_if_closed(store, model, conversation_id, now_ts)
     report.residents = refresh_residents(store, now_ts)  # 新片段、新事实可能改变常驻栏（D17）
     if sweep_forgotten:
-        report.sweep = sweep(store, model, now_ts, rng=rng, baseline=baseline)
+        report.sweep = (
+            sweep(store, model, now_ts, rng=rng, baseline=baseline) if config.enabled("batch_sweep") else None
+        )
         if report.sweep:  # 有片段被遗忘：它们所在的对话，摘要重新概括、更抽象一层
             gone = set(report.sweep.archived) | {int(i) for i in report.sweep.kept}
             for cid in sorted({store.get_segment(i).conversation_id for i in gone}):
@@ -210,7 +213,9 @@ def consolidate(
     return report
 
 
-SEGMENT_BUDGET = 6000  # 每批消息最多占多少 token（暂定）。Qwen 上下文 16384，要给提示词和输出留余量
+SEGMENT_BUDGET = config.value(
+    "runner", "segment_budget", 6000
+)  # 每批消息最多占多少 token（暂定）。Qwen 上下文 16384，要给提示词和输出留余量
 
 
 def split_turns(

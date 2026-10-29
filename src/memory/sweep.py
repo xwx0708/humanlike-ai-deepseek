@@ -19,6 +19,7 @@ from memory.forgetting import initial_half_life, relative_arousal
 from memory.prompts import KEYWORDS_SCHEMA, build_keywords_prompt, parse_keywords
 from memory.resident import effective_strength
 from memory.store import MemoryStore
+from runtime import config
 
 IN_MEMORY = ("active", "abstract")  # 还在记忆系统里的状态
 
@@ -30,7 +31,7 @@ class SweepKnobs:
     excerpt_chars: int = 300  # 给模型看的原文节选长度
 
 
-DEFAULT_KNOBS = SweepKnobs()
+DEFAULT_KNOBS = config.knobs(SweepKnobs(), "sweep")
 
 
 @dataclass

@@ -22,6 +22,7 @@ from memory.lifecycle import context_used, register
 from memory.merge import MergeReport, merge_recent_threads
 from memory.store import MemoryStore
 from memory.subconscious import ConsolidationReport, consolidate
+from runtime import config
 from runtime.lifecycle import RUNNING, Lifecycle
 
 
@@ -31,7 +32,7 @@ class RunnerKnobs:
     night_hour: int = 3  # 几点以后算"夜间"（暂定）
 
 
-DEFAULT_KNOBS = RunnerKnobs()
+DEFAULT_KNOBS = config.knobs(RunnerKnobs(), "runner")
 
 
 @dataclass
@@ -61,10 +62,18 @@ def tick(
         unsummarized = not turns and store.segments(cid) and not store.get_conversation(cid).summary
         if paused or (unsummarized and conversation_closed(store, cid, now_ts)):
             report.consolidated[cid] = consolidate(store, model, cid, now_ts, rng)
-        elif turns and (until := split_point(store, cid, now_ts, clock)) is not None:
+        elif (
+            turns
+            and config.enabled("mid_chat_split")
+            and (until := split_point(store, cid, now_ts, clock)) is not None
+        ):
             report.consolidated[cid] = consolidate(store, model, cid, now_ts, rng, until_ts=until)
     today = time.strftime("%Y-%m-%d", time.localtime(now_ts))
-    if time.localtime(now_ts).tm_hour >= k.night_hour and store.get_meta("last_merge_day") != today:
+    if (
+        config.enabled("nightly_merge")
+        and time.localtime(now_ts).tm_hour >= k.night_hour
+        and store.get_meta("last_merge_day") != today
+    ):
         report.merged = merge_recent_threads(store, model, now_ts)
         store.set_meta("last_merge_day", today)
     return report

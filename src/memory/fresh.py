@@ -16,6 +16,7 @@ from contracts.memory import ChatTurn
 from memory.clock import MemoryClock, clock_of
 from memory.forgetting import ForgettingKnobs, strength
 from memory.store import MemoryStore
+from runtime import config
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,7 @@ class FreshKnobs:
     split_upto: float = 0.96  # 这一批整理到强度低于它的消息为止，最近约 1 小时的话留到下一批（暂定）
 
 
-DEFAULT_KNOBS = FreshKnobs()
+DEFAULT_KNOBS = config.knobs(FreshKnobs(), "fresh")
 
 
 @dataclass(frozen=True)

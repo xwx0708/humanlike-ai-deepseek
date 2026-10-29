@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from contracts.memory import ChatTurn
 from memory.store import MemoryStore
+from runtime import config
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ class BoundaryRules:
     max_minutes: float = 60  # 距上一个候选边界满这么久，强制标一次
 
 
-DEFAULT_RULES = BoundaryRules()
+DEFAULT_RULES = config.knobs(BoundaryRules(), "boundaries")
 
 # 出现在句首才算的信号："对了"在句中常常不是换话题
 _LEADING = (

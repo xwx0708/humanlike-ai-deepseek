@@ -27,6 +27,7 @@ from memory.clock import MemoryClock, clock_of
 from memory.forgetting import Trace, recall
 from memory.resident import effective_strength, is_resident_segment
 from memory.store import MemoryStore
+from runtime import config
 
 IN_MEMORY = ("active", "abstract")
 
@@ -45,7 +46,7 @@ class ScannerKnobs:
     negative_damp: float = 0.6  # 负面且话题无关时，浮现概率最多打几折（暂定）
 
 
-DEFAULT_KNOBS = ScannerKnobs()
+DEFAULT_KNOBS = config.knobs(ScannerKnobs(), "scanner")
 
 
 @dataclass

@@ -15,6 +15,7 @@ from contracts.llm import Message, system, user
 from contracts.memory import PROFILE_CATEGORIES, ChatTurn, EmotionScore
 from memory.forgetting import ForgettingKnobs
 from memory.tuning import TUNABLE
+from runtime import config
 
 
 def _clamp(x: Any, lo: float, hi: float, default: float) -> float:
@@ -259,7 +260,9 @@ THREAD_SCHEMA: dict[str, Any] = {
     ],
 }
 
-THREAD_CONFIDENCE_MIN = 0.6  # 把握低于此值就新建（暂定，待用真实数据校准）
+THREAD_CONFIDENCE_MIN = config.value(
+    "runner", "thread_confidence_min", 0.6
+)  # 把握低于此值就新建（暂定，待用真实数据校准）
 
 
 @dataclass

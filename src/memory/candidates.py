@@ -18,6 +18,7 @@ import jieba
 
 from contracts.memory import Segment
 from memory.store import MemoryStore
+from runtime import config
 
 jieba.setLogLevel(logging.WARNING)
 
@@ -34,7 +35,7 @@ class CandidateRules:
     min_alias_len: int = 2  # 档案人名匹配时，叫法至少几个字（太短的"妈""哥"会误匹配）
 
 
-DEFAULT_RULES = CandidateRules()
+DEFAULT_RULES = config.knobs(CandidateRules(), "candidates")
 
 _STOP = {
     "的",

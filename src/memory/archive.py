@@ -11,6 +11,7 @@ from memory.candidates import bm25, tokenize
 from memory.clock import clock_of
 from memory.forgetting import Trace, recall
 from memory.store import MemoryStore
+from runtime import config
 
 TO_ARCHIVE = "存进档案"
 ERASE = "彻底删除"
@@ -37,7 +38,10 @@ class ArchiveHit:
 
 
 def search_archive(
-    store: MemoryStore, query: str, limit: int = 5, excerpt_chars: int = 200
+    store: MemoryStore,
+    query: str,
+    limit: int = config.value("archive", "limit", 5),
+    excerpt_chars: int = config.value("archive", "excerpt_chars", 200),
 ) -> list[ArchiveHit]:
     """在档案里搜索（只搜已经移出记忆系统的片段）：jieba 分词 + BM25，对象是片段标题和消息原文。
     只在用户要求时调用（D25）。"""

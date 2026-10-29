@@ -6,6 +6,7 @@
 from dataclasses import dataclass, fields, replace
 
 from memory.forgetting import ForgettingKnobs
+from runtime import config
 
 # 允许潜意识修改的全局参数。小模型调整自身上限的参数（adjust_*）不在其中，避免它给自己松绑。
 TUNABLE = ("base_half_life", "emotion_max", "importance_max", "reinforce", "position_bonus", "forget_line")
@@ -19,7 +20,7 @@ class GlobalLimits:
 
 
 DEFAULT_LIMITS = GlobalLimits()
-DEFAULT_KNOBS = ForgettingKnobs()  # "允许范围"以这组默认值为中心
+DEFAULT_KNOBS = config.knobs(ForgettingKnobs(), "forgetting")  # "允许范围"以这组默认值为中心
 
 
 @dataclass(frozen=True)

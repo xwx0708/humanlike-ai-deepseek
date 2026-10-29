@@ -11,6 +11,7 @@ import random
 from dataclasses import dataclass
 
 from contracts.memory import ProfileFact
+from runtime import config
 
 EVOKE, OVERWRITE, NOTHING = "唤起", "覆盖", "都不"
 
@@ -23,7 +24,7 @@ class ConflictKnobs:
     overwrite_max: float = 0.8  # 最不牢固的旧记录被覆盖的概率
 
 
-DEFAULT_KNOBS = ConflictKnobs()
+DEFAULT_KNOBS = config.knobs(ConflictKnobs(), "profile")
 
 
 def firmness(fact: ProfileFact, idle_days: float, k: ConflictKnobs = DEFAULT_KNOBS) -> float:

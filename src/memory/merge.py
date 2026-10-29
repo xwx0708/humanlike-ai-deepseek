@@ -27,9 +27,14 @@ from memory.candidates import bm25, tokenize
 from memory.resident import ResidentReport, refresh_residents
 from memory.store import MemoryStore
 from memory.subconscious import update_summary
+from runtime import config
 
-RECENT_DAYS = 7.0  # 暂定：多少天内新建的线算"近期新建"。按日历时间（created_ts），不按记忆时钟
-MERGE_CONFIDENCE_MIN = 0.8  # 暂定：比挂事件线的 0.6 更保守，错误合并比错误新建更难发现
+RECENT_DAYS = config.value(
+    "merge", "recent_days", 7.0
+)  # 暂定：多少天内新建的线算"近期新建"。按日历时间（created_ts），不按记忆时钟
+MERGE_CONFIDENCE_MIN = config.value(
+    "merge", "confidence_min", 0.8
+)  # 暂定：比挂事件线的 0.6 更保守，错误合并比错误新建更难发现
 MAX_CANDIDATES = 8  # 暂定：每条线一次最多给模型看几条候选（一小批，Qwen 判断更稳）
 KEYWORD_TOP = 5  # 暂定：关键词重合取前几条
 MIN_ALIAS_LEN = 2  # 档案人名匹配时叫法至少几个字，同 candidates.CandidateRules.min_alias_len

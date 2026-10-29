@@ -8,15 +8,16 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterator
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 from typing import Any
 
 from contracts.memory import ChatTurn, Conversation, EmotionScore, Person, ProfileFact, Segment, Thread
 from memory.forgetting import ForgettingKnobs
 from memory.tuning import GlobalChange
+from runtime import config
 
-DEFAULT_PATH = Path(__file__).resolve().parents[2] / "data" / "memory.db"
+DEFAULT_PATH = config.data_dir() / "memory.db"  # 数据文件夹可在设置页选（D40）
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -702,8 +703,11 @@ class MemoryStore:
 
     def load_global_knobs(self) -> ForgettingKnobs:
         saved = {r["name"]: r["value"] for r in self.db.execute("SELECT * FROM global_knobs")}
-        valid = {f.name for f in fields(ForgettingKnobs)}
-        return ForgettingKnobs(**{k: v for k, v in saved.items() if k in valid})
+        user = set(config.section("forgetting"))  # 设置页里改过的，以用户为准（D40）
+        valid = {f.name for f in fields(ForgettingKnobs)} - user
+        return replace(
+            config.knobs(ForgettingKnobs(), "forgetting"), **{k: v for k, v in saved.items() if k in valid}
+        )
 
     def save_global_knobs(self, knobs: ForgettingKnobs) -> None:
         with self.db:
