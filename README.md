@@ -55,6 +55,12 @@ docker compose up -d            # 下载并启动 NapCat、AstrBot 的官方镜�
 2. 打开 `http://127.0.0.1:6099/webui`（NapCat），用 QQ 小号扫码登录。
 3. 在 `data/persona.md` 写人设，改了立即生效。
 
+   不想从头写的话，可以去这些开源人设库挑一个，复制进 `data/persona.md` 再按需修改：
+   - [hitikem/qqbot-personas](https://github.com/hitikem/qqbot-personas)：专为 QQ 机器人 + DeepSeek 写的中文人设，14 套，含 DeepSeek 蓝鲸拟人"蓝鲸娘"（MIT）
+   - [mrqy1/astrbot-persona](https://github.com/mrqy1/astrbot-persona)：基于心理学框架的人设模板，带可叠加的性格模块（MIT）
+
+   如果觉得好用，记得去给原作者点个 ⭐ Star。
+
 完整步骤、手动部署和装好后要核对的事见 [03-回应/部署.md](03-回应/部署.md)。
 
 NapCat、AstrBot 都在安装时从官方镜像下载，不随本仓库分发。
