@@ -19,7 +19,7 @@ class Settings:
     thinking_provider: str = "deepseek"
     thinking_model: str = "deepseek-flash"
     thinking_context_limit: int = (
-        128000  # 思考模型的上下文上限（token）。熟悉期用到七成就启动记忆系统（D24）；换模型时要改
+        1000000  # 思考模型的上下文上限（token）。熟悉期用到七成就启动记忆系统（D24）；deepseek-flash 约 100 万（D39），换模型时要改
     )
     subconscious_provider: str = "ollama"
     subconscious_model: str = "qwen3.8:27b-q4_K_M"
