@@ -49,6 +49,8 @@ QQ 小号 ⇄ NapCat（OneBot v11）──反向 WebSocket──▶ AstrBot（ai
 | `src/response/background.py` | 记忆后台任务登记进共用调度，和 AstrBot 合成一个进程 |
 | `src/response/astrbot_plugin/` | AstrBot 插件：只回那一个 QQ 号的私聊，接管整轮，用 AstrBot 的模型和全部工具（含 MCP） |
 
+2026-10-29 补充：每轮加一句人设提醒（熟悉期放在旧记录之后）；被唤起的旧事实进浮现区（D16）；能读图片和文件（D38）。
+
 还没做：记忆使用回执（待议问题 14）、主动发消息（10）、非文字消息（11）、出错时说什么（22）、"要求修改"（17）。
 
 ## 暂定职责

@@ -9,7 +9,7 @@ from memory.scanner import Scanner, Surfaced
 from memory.store import MemoryStore
 from memory.subconscious import consolidate
 from response import requests
-from response.responder import PENDING_KEY, Responder
+from response.responder import PENDING_KEY, PERSONA_REMINDER, Responder
 from runtime.lifecycle import FAMILIAR, RUNNING
 
 MIN = 60.0
@@ -47,7 +47,11 @@ def test_familiar_phase_sends_whole_history(store):
     r.on_user_message("你好", 0)
     r.on_reply("嗯，你好", 10)
     p = r.on_user_message("今天好累", 20)
-    assert p.contexts == [{"role": "user", "content": "你好"}, {"role": "assistant", "content": "嗯，你好"}]
+    assert p.contexts == [
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": "嗯，你好"},
+        {"role": "system", "content": PERSONA_REMINDER},  # 人设提醒在旧记录之后，免得口气被带偏
+    ]
     assert p.prompt == "今天好累" and p.system == PERSONA
 
 
@@ -182,3 +186,19 @@ def test_own_actions_are_remembered(store):
     r.on_action("我在 QQ 空间发了一条说说（好友可见）：摸鱼中", 30)
     p = r.on_user_message("你刚才干嘛了", 60)
     assert "我：（我在 QQ 空间发了一条说说（好友可见）：摸鱼中）" in p.system
+
+
+def test_persona_reminder_in_running_phase(store):
+    r = responder(store)
+    assert r.on_user_message("在吗", 0).system.endswith(PERSONA_REMINDER)
+
+
+def test_evoked_old_fact_surfaces_once(store):
+    """D16：改口时旧记录被唤起，下一轮出现在浮现区，只出现一次。"""
+    old = store.add_profile_fact(None, "饮食", "他不吃香菜", 0)
+    new = store.add_profile_fact(None, "饮食", "他现在爱吃香菜", 100)
+    store.add_evocation(old, new, 100)
+    r = responder(store)
+    p = r.on_user_message("今晚吃火锅", 200)
+    assert "你想起他以前说过：他不吃香菜（和他后来说的「他现在爱吃香菜」不一样）" in p.system
+    assert "他不吃香菜（" not in r.on_user_message("要不要加香菜", 260).system

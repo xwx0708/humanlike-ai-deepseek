@@ -17,6 +17,7 @@ from memory.archive import forget_thread, search_archive
 from memory.boundaries import ingest_turn
 from memory.fresh import drop_fresh, fresh_block, fresh_memories
 from memory.lifecycle import report_context_used
+from memory.profile import take_evocations
 from memory.resident import resident_block
 from memory.scanner import Scanner, focus_of, search_memory
 from memory.store import MemoryStore
@@ -28,6 +29,8 @@ SURFACED_HEADER = (
     "以下是你此刻自己想起来的事。说不说、怎么说，由你根据当下的语境判断，不必每条都提；"
     "清晰度低的只是模糊印象，可以说记不太清。"
 )
+# 熟悉期带着全部旧聊天记录，模型会跟着自己以前的说话方式走，人设被冲淡；每轮在记录之后、这一条之前提醒一次
+PERSONA_REMINDER = "回复时保持上面人设里的身份和口气，不要被前面聊天记录里的说话方式带偏。"
 PENDING_KEY = "pending_forget"  # 要求忘掉、等用户选方式时，记下是哪件事
 
 
@@ -66,6 +69,8 @@ class Responder:
         if self.phase() == FAMILIAR:
             history = [t for t in self.store.all_turns() if t.id != turn.id]
             contexts = [{"role": t.role, "content": t.content} for t in history]
+            if persona and contexts:
+                contexts.append({"role": "system", "content": PERSONA_REMINDER})
             return Prompt(_join(persona, _notes_block(notes)), contexts, prompt_text, notes, images)
         # 运行期：话题和专注程度交给扫描器，下一次扫描按新的话题充电、按专注程度定温度（D26）
         self.scanner.set_topic(remembered)
@@ -75,9 +80,10 @@ class Responder:
         system = _join(
             persona,
             resident_block(self.store),
-            _surfaced_block(surfaced),
+            _surfaced_block(surfaced, take_evocations(self.store)),
             fresh_block(fresh),
             _notes_block(notes),
+            PERSONA_REMINDER if persona else "",
         )
         return Prompt(system, [], prompt_text, notes, images)
 
@@ -141,12 +147,14 @@ def _archive_note(hits: list) -> str:
     return "\n".join(lines)
 
 
-def _surfaced_block(items: list) -> str:
-    if not items:
+def _surfaced_block(items: list, evoked: list[str] = ()) -> str:
+    """浮现区：自己冒头的记忆，加上被唤起的旧事实（D16）。"""
+    if not items and not evoked:
         return ""
     lines = [SURFACED_HEADER]
     for s in items:
         lines.append(f"- （清晰度 {s.clarity:.1f}）{s.text}")
+    lines += [f"- {e}" for e in evoked]
     return "\n".join(lines)
 
 
