@@ -12,9 +12,11 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-MAX_BYTES = 20 * 1024 * 1024  # 单个文件上限（暂定）
-PROMPT_CHARS = 20000  # 一个文件最多放进提示词多少字（暂定）
-MEMORY_CHARS = 2000  # 记进记忆的开头部分（暂定）
+from runtime import config
+
+MAX_BYTES = int(config.value("attachments", "max_mb", 20.0) * 1024 * 1024)  # 单个文件上限（暂定）
+PROMPT_CHARS = config.value("attachments", "prompt_chars", 20000)  # 一个文件最多放进提示词多少字（暂定）
+MEMORY_CHARS = config.value("attachments", "memory_chars", 2000)  # 记进记忆的开头部分（暂定）
 
 IMAGE = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
 TEXT = (

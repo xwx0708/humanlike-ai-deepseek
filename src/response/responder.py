@@ -23,6 +23,7 @@ from memory.scanner import Scanner, focus_of, search_memory
 from memory.store import MemoryStore
 from response import requests
 from response.attachments import Attachment
+from runtime import config
 from runtime.lifecycle import FAMILIAR, Lifecycle
 
 SURFACED_HEADER = (
@@ -69,7 +70,7 @@ class Responder:
         if self.phase() == FAMILIAR:
             history = [t for t in self.store.all_turns() if t.id != turn.id]
             contexts = [{"role": t.role, "content": t.content} for t in history]
-            if persona and contexts:
+            if persona and contexts and config.enabled("persona_reminder"):
                 contexts.append({"role": "system", "content": PERSONA_REMINDER})
             return Prompt(_join(persona, _notes_block(notes)), contexts, prompt_text, notes, images)
         # 运行期：话题和专注程度交给扫描器，下一次扫描按新的话题充电、按专注程度定温度（D26）
@@ -83,7 +84,7 @@ class Responder:
             _surfaced_block(surfaced, take_evocations(self.store)),
             fresh_block(fresh),
             _notes_block(notes),
-            PERSONA_REMINDER if persona else "",
+            PERSONA_REMINDER if persona and config.enabled("persona_reminder") else "",
         )
         return Prompt(system, [], prompt_text, notes, images)
 
@@ -110,7 +111,7 @@ class Responder:
             if choice:  # D25：由用户选，选了才执行
                 said = forget_thread(self.store, target["thread"], choice, ts)
                 return [f"已按对方的选择处理「{target['title']}」：{said}用你自己的话告诉对方。"]
-        kind = requests.detect(text)
+        kind = requests.detect(text) if config.enabled("keyword_requests") else None
         if kind == requests.REMEMBER:
             self.store.mark_remember(turn_id)  # 整理时含这条消息的片段算用户要求记住（D17 免竞争）
             return ["对方要你记住这件事，已经记下了。自然地答应就好。"]

@@ -22,6 +22,9 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
+# 设置页里可以单独关掉的工具（D35、D40）
+QQ_TOOLS = ("qq_set_avatar", "qq_set_nickname", "qq_set_signature", "qq_post_moment", "qq_delete_moment")
+
 DEFAULT_ROOT = Path(__file__).resolve().parents[3]  # 插件放在项目的 src/response/astrbot_plugin/ 里时
 
 
@@ -114,12 +117,18 @@ class HumanlikePlugin(Star):
         import astrbot.api.message_components as Comp
 
         from response.attachments import read_file, read_image, unsupported
+        from runtime import config
 
         out = []
         for comp in event.message_obj.message:
             try:
                 if isinstance(comp, Comp.Image):
-                    out.append(read_image(await comp.convert_to_file_path(), "图片"))
+                    if not config.enabled("read_images"):
+                        out.append(unsupported("图片", "看图功能已在设置里关闭"))
+                    else:
+                        out.append(read_image(await comp.convert_to_file_path(), "图片"))
+                elif isinstance(comp, Comp.File) and not config.enabled("read_files"):
+                    out.append(unsupported(comp.name or "文件", "读文件功能已在设置里关闭"))
                 elif isinstance(comp, Comp.File):
                     name = comp.name or "文件"
                     out.append(read_file(await comp.get_file(), name))
@@ -135,7 +144,14 @@ class HumanlikePlugin(Star):
     async def _tools(self, event: AstrMessageEvent):
         """交给模型的工具：AstrBot 登记的全部工具（含 MCP 和本插件的），再加上 AstrBot 自带的联网搜索（D36）。
         联网搜索只在 AstrBot 默认流程里才会加，插件接管整轮后要自己补；是否开启、用哪家，按 AstrBot 网页里的设置。"""
+        from runtime import config
+
         tools = self.context.get_llm_tool_manager().get_full_tool_set()
+        for name in QQ_TOOLS:  # 设置页关掉的"自己的事"，不交给模型（D40）
+            if not config.enabled(name):
+                tools.remove_tool(name)
+        if not config.enabled("web_search"):
+            return tools
         try:
             from types import SimpleNamespace
 

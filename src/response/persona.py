@@ -5,7 +5,9 @@
 
 from pathlib import Path
 
-DEFAULT_PATH = Path(__file__).resolve().parents[2] / "data" / "persona.md"
+from runtime import config
+
+DEFAULT_PATH = config.data_dir() / "persona.md"
 
 
 def load_persona(path: Path = DEFAULT_PATH) -> str:
