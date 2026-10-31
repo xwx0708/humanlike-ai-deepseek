@@ -60,7 +60,11 @@ def tick(
         turns = store.unsegmented_turns(cid)
         paused = turns and now_ts - turns[-1].ts >= k.pause
         unsummarized = not turns and store.segments(cid) and not store.get_conversation(cid).summary
-        if paused or (unsummarized and conversation_closed(store, cid, now_ts)):
+        if (
+            store.pending_consolidations(cid)
+            or paused
+            or (unsummarized and conversation_closed(store, cid, now_ts))
+        ):
             report.consolidated[cid] = consolidate(store, model, cid, now_ts, rng)
         elif (
             turns

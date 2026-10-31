@@ -19,7 +19,7 @@
 import math
 import random
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from contracts.memory import Segment
 from memory.candidates import bm25, tokenize
@@ -76,6 +76,22 @@ class Scanner:
     def set_focus(self, focus: float) -> None:
         self.focus = min(1.0, max(0.0, focus))
 
+    def refresh_buffer(self, now_ts: float) -> None:
+        """缓存只保留仍可见的片段，并重新读取清晰度与文本，防止删除或抽象化后泄露旧内容。"""
+        clock = clock_of(self.store)
+        visible = {s.id: s for state in IN_MEMORY for s in self.store.segments(state=state)}
+        refreshed = []
+        for item in self.buffer:
+            seg = visible.get(item.segment_id)
+            if seg is None:
+                continue
+            clarity = effective_strength(self.store, seg, now_ts, clock)
+            if clarity >= self.store.load_global_knobs().forget_line:
+                refreshed.append(replace(item, text=_text(seg), clarity=min(item.clarity, clarity)))
+        self.buffer = refreshed
+        self.priming = {sid: value for sid, value in self.priming.items() if sid in visible}
+        self._last_scan = {sid: value for sid, value in self._last_scan.items() if sid in visible}
+
     def set_topic(self, text: str, person_ids: list[int] = ()) -> None:
         """当下话题变化时调用一次：给相关记忆"充电"。"""
         segs = [s for state in IN_MEMORY for s in self.store.segments(state=state)]
@@ -113,6 +129,7 @@ class Scanner:
 
     def tick(self, now_ts: float, clock: MemoryClock | None = None) -> list[Surfaced]:
         """扫描下一个分区（时钟指针走一格），返回这一格新冒头的记忆。"""
+        self.refresh_buffer(now_ts)
         parts = self.partitions()
         if not parts:
             return []

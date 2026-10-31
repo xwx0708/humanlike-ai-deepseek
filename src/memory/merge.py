@@ -141,8 +141,8 @@ def parse_merge(data: dict[str, Any], candidate_ids: list[int]) -> list[MergeJud
 
 
 def _alive(store: MemoryStore, tid: int) -> bool:
-    r = store.db.execute("SELECT merged_into FROM threads WHERE id = ?", (tid,)).fetchone()
-    return r is not None and r[0] is None
+    r = store.db.execute("SELECT merged_into, forgotten_ts FROM threads WHERE id = ?", (tid,)).fetchone()
+    return r is not None and r[0] is None and r[1] is None
 
 
 def recent_threads(store: MemoryStore, now_ts: float, days: float = RECENT_DAYS) -> list[int]:
@@ -151,7 +151,8 @@ def recent_threads(store: MemoryStore, now_ts: float, days: float = RECENT_DAYS)
     return [
         r[0]
         for r in store.db.execute(
-            "SELECT id FROM threads WHERE merged_into IS NULL AND created_ts >= ? ORDER BY created_ts, id",
+            "SELECT id FROM threads WHERE merged_into IS NULL AND forgotten_ts IS NULL "
+            "AND created_ts >= ? ORDER BY created_ts, id",
             (since,),
         )
     ]
@@ -183,6 +184,8 @@ def find_duplicates(
     """可能和 tid 重复的线：{事件线 id: 命中的来源}。复用挂线候选的几种硬规则，不含"最近活跃"
     （夜间合并只找重复，最近活跃的线和这条无关时只是噪声）。常驻的线也算（重复的线可能已经常驻）。"""
     hits: dict[int, list[str]] = {}
+    if not _alive(store, tid):
+        return hits
 
     def add(tids, source):
         for t in tids:
@@ -279,6 +282,8 @@ def _merged_exempt(keep: str | None, drop: str | None) -> str | None:
 
 def merge_pair(store: MemoryStore, model: ChatModel | None, keep: int, drop: int, now_ts: float) -> None:
     """把 drop 合并进 keep。片段与 merged_into 用 store.merge_threads；其余在这里用 SQL 补齐。"""
+    if not (_alive(store, keep) and _alive(store, drop)):
+        raise ValueError("已归档或已合并的事件线不能再次合并")
     k, d = store.get_thread(keep), store.get_thread(drop)
     ex = {
         r[0]: r[1]

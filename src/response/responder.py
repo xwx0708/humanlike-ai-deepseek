@@ -64,11 +64,12 @@ class Responder:
         remembered = _join_lines(text, *(a.memory_note() for a in attachments))
         turn = ingest_turn(self.store, "user", remembered, ts)
         notes = self._handle_requests(text, turn.id, ts)  # 对记忆的要求只看对方打的字
+        self.scanner.refresh_buffer(ts)
         prompt_text = _join(text, *(a.prompt_block() for a in attachments))
         images = [a.image_path for a in attachments if a.kind == "图片"]
         persona = self.persona()
         if self.phase() == FAMILIAR:
-            history = [t for t in self.store.all_turns() if t.id != turn.id]
+            history = [t for t in self.store.all_turns(include_forgotten=False) if t.id != turn.id]
             contexts = [{"role": t.role, "content": t.content} for t in history]
             if persona and contexts and config.enabled("persona_reminder"):
                 contexts.append({"role": "system", "content": PERSONA_REMINDER})

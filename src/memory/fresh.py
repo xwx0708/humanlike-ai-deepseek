@@ -82,7 +82,13 @@ def drop_fresh(store: MemoryStore, surfaced: list, fresh: list[FreshMemory]) -> 
     ids = {m.turn.id for m in fresh}
     out = []
     for s in surfaced:
-        own = set(store.get_segment(s.segment_id).message_ids)
+        try:
+            seg = store.get_segment(s.segment_id)
+        except KeyError:
+            continue
+        if seg.state not in ("active", "abstract"):
+            continue
+        own = set(seg.message_ids)
         if not (own and own <= ids):
             out.append(s)
     return out

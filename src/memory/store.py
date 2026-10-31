@@ -8,6 +8,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, fields, replace
 from pathlib import Path
 from typing import Any
@@ -111,6 +112,10 @@ CREATE TABLE IF NOT EXISTS evocations (
     id INTEGER PRIMARY KEY, fact_id INTEGER NOT NULL REFERENCES profile_facts(id),
     trigger_fact_id INTEGER REFERENCES profile_facts(id), ts REAL NOT NULL, consumed INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS consolidation_jobs (
+    segment_id INTEGER PRIMARY KEY REFERENCES segments(id) ON DELETE CASCADE,
+    batch_id INTEGER NOT NULL, stage TEXT NOT NULL, payload TEXT NOT NULL
+);
 """
 
 
@@ -122,17 +127,41 @@ class MemoryStore:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        self._savepoint = 0
         cols = {r[1] for r in self.db.execute("PRAGMA table_info(threads)")}
         if "exempt" not in cols:  # D18 之前建的库
             self.db.execute("ALTER TABLE threads ADD COLUMN exempt TEXT")
         if "forgotten_ts" not in cols:  # D25 之前建的库
             self.db.execute("ALTER TABLE threads ADD COLUMN forgotten_ts REAL")
+        # 旧版整理失败可能留下未挂线的片段；重开数据库后也能恢复。
+        with self.transaction():
+            self.db.execute(
+                "INSERT OR IGNORE INTO consolidation_jobs "
+                "SELECT s.id, s.id, 'thread', '{}' FROM segments s "
+                "WHERE s.state = 'active' AND NOT EXISTS "
+                "(SELECT 1 FROM thread_segments ts WHERE ts.segment_id = s.id)"
+            )
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """可嵌套的短事务：阶段结果与进度一起提交，不跨模型调用持有写锁。"""
+        self._savepoint += 1
+        name = f"memory_{self._savepoint}"
+        self.db.execute(f"SAVEPOINT {name}")
+        try:
+            yield
+        except BaseException:
+            self.db.execute(f"ROLLBACK TO {name}")
+            self.db.execute(f"RELEASE {name}")
+            raise
+        else:
+            self.db.execute(f"RELEASE {name}")
 
     def close(self) -> None:
         self.db.close()
 
     def _insert(self, sql: str, args: tuple) -> int:
-        with self.db:
+        with self.transaction():
             return self.db.execute(sql, args).lastrowid
 
     # ---------- 一场对话与消息（档案原文） ----------
@@ -142,7 +171,7 @@ class MemoryStore:
         return Conversation(cid, start_ts, start_ts)
 
     def add_turn(self, conversation_id: int, role: str, content: str, ts: float) -> ChatTurn:
-        with self.db:
+        with self.transaction():
             tid = self.db.execute(
                 "INSERT INTO turns (conversation_id, role, content, ts) VALUES (?, ?, ?, ?)",
                 (conversation_id, role, content, ts),
@@ -159,10 +188,26 @@ class MemoryStore:
     def conversation_ids(self) -> list[int]:
         return [r[0] for r in self.db.execute("SELECT id FROM conversations ORDER BY start_ts, id")]
 
-    def all_turns(self) -> list[ChatTurn]:
+    def all_turns(self, *, include_forgotten: bool = True) -> list[ChatTurn]:
         """全部消息按先后；熟悉期回应模块把它们都放进上下文。"""
         rows = self.db.execute("SELECT * FROM turns ORDER BY ts, id")
-        return [ChatTurn(r["id"], r["conversation_id"], r["role"], r["content"], r["ts"]) for r in rows]
+        hidden = set() if include_forgotten else self.forgotten_turn_ids()
+        return [
+            ChatTurn(r["id"], r["conversation_id"], r["role"], r["content"], r["ts"])
+            for r in rows
+            if r["id"] not in hidden
+        ]
+
+    def forgotten_turn_ids(self) -> set[int]:
+        """用户主动存档的原消息；自然遗忘不在此列，显式恢复事件线后自动解除。"""
+        return {
+            r[0]
+            for r in self.db.execute(
+                "SELECT DISTINCT st.turn_id FROM segment_turns st "
+                "JOIN thread_segments ts ON ts.segment_id = st.segment_id "
+                "JOIN threads t ON t.id = ts.thread_id WHERE t.forgotten_ts IS NOT NULL"
+            )
+        }
 
     def all_turn_texts(self) -> list[str]:
         return [r[0] for r in self.db.execute("SELECT content FROM turns ORDER BY id")]
@@ -172,11 +217,15 @@ class MemoryStore:
         return r[0] if r else default
 
     def set_meta(self, key: str, value: str) -> None:
-        with self.db:
+        with self.transaction():
             self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
 
+    def visibility_revision(self) -> int:
+        """主动遗忘发生后，丢弃后台模型基于旧内容算出的结果。"""
+        return int(self.get_meta("visibility_revision", "0"))
+
     def mark_remember(self, turn_id: int) -> None:
-        with self.db:
+        with self.transaction():
             self.db.execute("INSERT OR IGNORE INTO remember_marks VALUES (?)", (turn_id,))
 
     def remember_marks(self) -> set[int]:
@@ -187,7 +236,7 @@ class MemoryStore:
         return self.get_conversation(r["id"]) if r else None
 
     def set_conversation_summary(self, cid: int, summary: str) -> None:
-        with self.db:
+        with self.transaction():
             self.db.execute("UPDATE conversations SET summary = ? WHERE id = ?", (summary, cid))
 
     def turns(self, conversation_id: int, after_id: int = 0) -> list[ChatTurn]:
@@ -217,8 +266,10 @@ class MemoryStore:
 
     def iter_turns_newest_first(self) -> Iterator[ChatTurn]:
         """所有对话的消息，从最新往回逐条取；新鲜记忆用，取到不新鲜为止。"""
+        hidden = self.forgotten_turn_ids()
         for r in self.db.execute("SELECT * FROM turns ORDER BY ts DESC, id DESC"):
-            yield ChatTurn(r["id"], r["conversation_id"], r["role"], r["content"], r["ts"])
+            if r["id"] not in hidden:
+                yield ChatTurn(r["id"], r["conversation_id"], r["role"], r["content"], r["ts"])
 
     def unsegmented_turns(self, conversation_id: int) -> list[ChatTurn]:
         """还没被切进任何片段的消息：第二层要处理的部分。"""
@@ -232,7 +283,7 @@ class MemoryStore:
     # ---------- 候选边界（切段第一层的输出） ----------
 
     def add_boundary(self, turn_id: int, reason: str) -> None:
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 "INSERT OR IGNORE INTO boundaries (turn_id, reason) VALUES (?, ?)", (turn_id, reason)
             )
@@ -250,9 +301,9 @@ class MemoryStore:
 
     # ---------- 片段 ----------
 
-    def add_segment(self, seg: Segment) -> Segment:
+    def add_segment(self, seg: Segment, *, job: dict[str, Any] | None = None) -> Segment:
         e = seg.emotion
-        with self.db:
+        with self.transaction():
             sid = self.db.execute(
                 "INSERT INTO segments (conversation_id, title, start_ts, end_ts, arousal, valence, importance, "
                 "emotion_reason, half_life, last_recall_ts, recall_count, adjustment, at_edge, state, trace, "
@@ -282,8 +333,49 @@ class MemoryStore:
             self.db.executemany(
                 "INSERT INTO segment_people VALUES (?, ?)", [(sid, p) for p in seg.person_ids]
             )
+            if job is not None:
+                self.save_consolidation_job(sid, job.get("batch_id") or sid, "facts", job)
         seg.id = sid
         return seg
+
+    def save_consolidation_job(self, sid: int, batch_id: int, stage: str, payload: dict) -> None:
+        with self.transaction():
+            self.db.execute(
+                "INSERT OR REPLACE INTO consolidation_jobs VALUES (?, ?, ?, ?)",
+                (sid, batch_id, stage, json.dumps(payload, ensure_ascii=False)),
+            )
+
+    def consolidation_job(self, sid: int) -> tuple[int, str, dict]:
+        r = self.db.execute("SELECT * FROM consolidation_jobs WHERE segment_id = ?", (sid,)).fetchone()
+        return r["batch_id"], r["stage"], json.loads(r["payload"])
+
+    def pending_consolidations(self, cid: int) -> list[int]:
+        return [
+            r[0]
+            for r in self.db.execute(
+                "SELECT j.segment_id FROM consolidation_jobs j JOIN segments s ON s.id = j.segment_id "
+                "WHERE s.conversation_id = ? AND j.stage != 'done' AND s.state != 'archived' "
+                "ORDER BY j.segment_id",
+                (cid,),
+            )
+        ]
+
+    def consolidation_batch(self, batch_id: int) -> set[int]:
+        return {
+            r[0]
+            for r in self.db.execute(
+                "SELECT segment_id FROM consolidation_jobs WHERE batch_id = ?", (batch_id,)
+            )
+        }
+
+    def adjusted_in_batch(self, batch_id: int) -> set[str]:
+        return {
+            r[0]
+            for r in self.db.execute(
+                "SELECT target FROM tuning_log WHERE scope = 'memory' AND json_extract(evidence, '$.batch') = ?",
+                (batch_id,),
+            )
+        }
 
     def get_segment(self, sid: int) -> Segment:
         r = self.db.execute("SELECT * FROM segments WHERE id = ?", (sid,)).fetchone()
@@ -322,7 +414,7 @@ class MemoryStore:
 
     def save_segment_state(self, seg: Segment) -> None:
         """保存遗忘曲线相关的字段（半衰期、回忆、调整、状态、残影）。"""
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 "UPDATE segments SET half_life = ?, last_recall_ts = ?, recall_count = ?, adjustment = ?, "
                 "at_edge = ?, state = ?, trace = ? WHERE id = ?",
@@ -348,7 +440,7 @@ class MemoryStore:
 
     def link_segments(self, from_id: int, to_id: int, kind: str = "next") -> None:
         """片段之间的关系。kind="next" 表示"接着聊到"；话题交错时可以有多条，是一张图。"""
-        with self.db:
+        with self.transaction():
             self.db.execute("INSERT OR IGNORE INTO segment_links VALUES (?, ?, ?)", (from_id, to_id, kind))
 
     def segment_links(self, conversation_id: int) -> list[tuple[int, int, str]]:
@@ -381,7 +473,7 @@ class MemoryStore:
         return Thread(tid, title, summary, ts, ts)
 
     def attach(self, thread_id: int, segment_id: int, confidence: float, ts: float) -> None:
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 "INSERT OR REPLACE INTO thread_segments VALUES (?, ?, ?)", (thread_id, segment_id, confidence)
             )
@@ -425,7 +517,7 @@ class MemoryStore:
     def update_thread(
         self, tid: int, *, title: str | None = None, summary: str | None = None, ongoing: bool | None = None
     ) -> None:
-        with self.db:
+        with self.transaction():
             if title is not None:
                 self.db.execute("UPDATE threads SET title = ? WHERE id = ?", (title, tid))
             if summary is not None:
@@ -478,7 +570,7 @@ class MemoryStore:
         self, tid: int, ts: float, resident: bool, reason: str, score: float | None = None
     ) -> None:
         """进入或退出常驻栏，并记日志。退出后不重置遗忘：照常从最近一次被提及开始算。"""
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 "UPDATE threads SET resident_since = ? WHERE id = ?", (ts if resident else None, tid)
             )
@@ -497,12 +589,12 @@ class MemoryStore:
         }
 
     def mark_exempt(self, tid: int, reason: str) -> None:
-        with self.db:
+        with self.transaction():
             self.db.execute("UPDATE threads SET exempt = ? WHERE id = ?", (reason, tid))
 
     def release_exempt(self, tid: int, ts: float, reason: str) -> None:
         """用户要求修改时解除免竞争（D18）。之后这条线和其他线一样竞争名额，不会再被自动标回免竞争。"""
-        with self.db:
+        with self.transaction():
             self.db.execute("UPDATE threads SET exempt = '' WHERE id = ?", (tid,))
             self.db.execute(
                 "INSERT INTO resident_log (thread_id, ts, action, reason, score) VALUES (?, ?, ?, ?, NULL)",
@@ -523,12 +615,12 @@ class MemoryStore:
     def relate_threads(self, a: int, b: int, note: str) -> None:
         """两条事件线"有关但不是同一件事"，例如漂移路径把它们连在一起。"""
         a, b = min(a, b), max(a, b)
-        with self.db:
+        with self.transaction():
             self.db.execute("INSERT OR REPLACE INTO thread_links VALUES (?, ?, ?)", (a, b, note))
 
     def merge_threads(self, keep: int, drop: int, ts: float) -> None:
         """夜间合并：把 drop 的片段移到 keep，drop 标记为已合并（不删除，便于追溯）。"""
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 "INSERT OR IGNORE INTO thread_segments SELECT ?, segment_id, confidence "
                 "FROM thread_segments WHERE thread_id = ?",
@@ -540,17 +632,49 @@ class MemoryStore:
 
     # ---------- 忘掉（D25）：用户选择存进档案，或彻底删除 ----------
 
+    def _invalidate_summaries(self, sids: list[int]) -> None:
+        """主动遗忘后立即丢弃派生摘要；共享事件线仅用其余可见片段重建，不沿用旧摘要。"""
+        marks = ",".join("?" * len(sids)) or "NULL"
+        self.db.execute(
+            f"UPDATE conversations SET summary = '' WHERE id IN "
+            f"(SELECT conversation_id FROM segments WHERE id IN ({marks}))",
+            sids,
+        )
+        tids = {
+            r[0]
+            for r in self.db.execute(
+                f"SELECT thread_id FROM thread_segments WHERE segment_id IN ({marks})", sids
+            )
+        }
+        for tid in tids:
+            parts = [
+                r[0]
+                for r in self.db.execute(
+                    "SELECT CASE s.state WHEN 'abstract' THEN s.trace ELSE s.title END FROM segments s "
+                    "JOIN thread_segments ts ON ts.segment_id = s.id "
+                    f"WHERE ts.thread_id = ? AND s.state != 'archived' AND s.id NOT IN ({marks}) "
+                    "ORDER BY s.start_ts, s.id",
+                    (tid, *sids),
+                )
+            ]
+            self.db.execute(
+                "UPDATE threads SET summary = ? WHERE id = ? AND forgotten_ts IS NULL",
+                ("；".join(parts[-10:]), tid),
+            )
+
     def forget_thread_to_archive(self, tid: int, ts: float) -> list[int]:
         """存进档案：这条线和它的片段不再出现在记忆系统里，原文留着，用户要求时可以搜索找回。
         只出自这条线的画像事实一起移进档案。返回移进档案的片段。"""
         sids = self.get_thread(tid).segment_ids
         marks = ",".join("?" * len(sids)) or "NULL"
-        with self.db:
+        with self.transaction():
+            self.set_meta("visibility_revision", str(self.visibility_revision() + 1))
             self.db.execute(
                 "UPDATE threads SET forgotten_ts = ?, resident_since = NULL WHERE id = ? OR merged_into = ?",
                 (ts, tid, tid),
             )
             self.db.execute(f"UPDATE segments SET state = 'archived' WHERE id IN ({marks})", sids)
+            self._invalidate_summaries(sids)
             self.db.execute(
                 "INSERT INTO resident_log (thread_id, ts, action, reason, score) VALUES (?, ?, '退出', ?, NULL)",
                 (tid, ts, "用户要求忘掉（存进档案）"),
@@ -559,11 +683,14 @@ class MemoryStore:
                 self.db.execute(
                     "UPDATE profile_facts SET archived_ts = ? WHERE id = ? AND archived_ts IS NULL", (ts, fid)
                 )
+                self.db.execute(
+                    "UPDATE evocations SET consumed = 1 WHERE fact_id = ? OR trigger_fact_id = ?", (fid, fid)
+                )
         return sids
 
     def restore_thread(self, tid: int) -> None:
         """从档案找回一条被用户忘掉的线：重新回到记忆系统（片段的状态由调用方处理）。"""
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 "UPDATE threads SET forgotten_ts = NULL WHERE id = ? OR merged_into = ?", (tid, tid)
             )
@@ -584,7 +711,14 @@ class MemoryStore:
     def erase_thread(self, tid: int, ts: float, reason: str) -> tuple[int, int]:
         """彻底删除：这条线、它的片段、只属于这些片段的消息原文、只出自它们的画像事实，以及相关的日志，
         全部从数据库删掉，不可恢复。只记一条不含内容的删除日志。返回 (删掉的片段数, 删掉的消息数)。"""
-        tids = [tid, *[r[0] for r in self.db.execute("SELECT id FROM threads WHERE merged_into = ?", (tid,))]]
+        tids = [
+            r[0]
+            for r in self.db.execute(
+                "WITH RECURSIVE family(id) AS (SELECT ? UNION "
+                "SELECT t.id FROM threads t JOIN family f ON t.merged_into = f.id) SELECT id FROM family",
+                (tid,),
+            )
+        ]
         sids = self.get_thread(tid).segment_ids
         sm = ",".join("?" * len(sids)) or "NULL"
         tm = ",".join("?" * len(tids))
@@ -600,8 +734,12 @@ class MemoryStore:
         um = ",".join("?" * len(turns)) or "NULL"
         facts = self._facts_only_from(sids)
         fm = ",".join("?" * len(facts)) or "NULL"
-        with self.db:
+        with self.transaction():
             ex = self.db.execute
+            self.set_meta("visibility_revision", str(self.visibility_revision() + 1))
+            self._invalidate_summaries(sids)
+            if ex("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'merge_log'").fetchone():
+                ex(f"DELETE FROM merge_log WHERE keep_id IN ({tm}) OR drop_id IN ({tm})", [*tids, *tids])
             ex(
                 f"DELETE FROM evocations WHERE fact_id IN ({fm}) OR trigger_fact_id IN ({fm})",
                 [*facts, *facts],
@@ -630,8 +768,10 @@ class MemoryStore:
             ex(f"DELETE FROM segments WHERE id IN ({sm})", sids)
             ex(f"DELETE FROM boundaries WHERE turn_id IN ({um})", turns)
             ex(f"DELETE FROM turns WHERE id IN ({um})", turns)
+            ex(f"DELETE FROM remember_marks WHERE turn_id IN ({um})", turns)
             ex(f"DELETE FROM thread_links WHERE a IN ({tm}) OR b IN ({tm})", [*tids, *tids])
             ex(f"DELETE FROM resident_log WHERE thread_id IN ({tm})", tids)
+            ex(f"UPDATE threads SET merged_into = NULL WHERE id IN ({tm})", tids)
             ex(f"DELETE FROM threads WHERE id IN ({tm})", tids)
             ex(
                 "INSERT INTO erase_log (ts, segments, turns, reason) VALUES (?, ?, ?, ?)",
@@ -675,7 +815,7 @@ class MemoryStore:
         """登记一个人和他的叫法。任何一个叫法已经认识，就并到那个人；否则新建。"""
         names = [n.strip() for n in [name, *aliases] if n and n.strip()]
         known = {pid for n in names if (pid := self.resolve(n)) is not None}
-        with self.db:
+        with self.transaction():
             if known:
                 pid = min(known)
                 for other in known - {pid}:  # 两个人其实是同一个：合并
@@ -710,7 +850,7 @@ class MemoryStore:
         )
 
     def save_global_knobs(self, knobs: ForgettingKnobs) -> None:
-        with self.db:
+        with self.transaction():
             self.db.executemany(
                 "INSERT OR REPLACE INTO global_knobs VALUES (?, ?)", list(asdict(knobs).items())
             )
@@ -719,7 +859,7 @@ class MemoryStore:
         self, scope: str, target: str, change: GlobalChange, evidence: dict[str, Any] | None = None
     ) -> None:
         """记一条调参日志。scope："memory"（单条记忆）或 "global"；被拒绝的请求也记。"""
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 "INSERT INTO tuning_log (scope, target, knob, at_day, old, requested, new, applied, reason, note, "
                 "evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -768,7 +908,7 @@ class MemoryStore:
         """登记一条稳定事实。同一个人、同一类、内容相同（忽略标点和空格）的在画像中的事实合并：
         只增加提及次数、更新最近提及时间、补充出处，原文不改。已移进档案的旧事实不参与合并。"""
         key = _fact_key(fact)
-        with self.db:
+        with self.transaction():
             row = self.db.execute(
                 "SELECT id FROM profile_facts WHERE IFNULL(person_id, 0) = IFNULL(?, 0) AND category = ? "
                 "AND fact_key = ? AND archived_ts IS NULL",
@@ -831,7 +971,7 @@ class MemoryStore:
 
     def archive_profile_fact(self, old_id: int, new_id: int, ts: float) -> None:
         """覆盖：旧事实移进档案（不删除），记下是哪条新事实覆盖了它。"""
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 "UPDATE profile_facts SET archived_ts = ?, superseded_by = ? WHERE id = ?",
                 (ts, new_id, old_id),
@@ -848,7 +988,7 @@ class MemoryStore:
         outcome: str,
         reason: str,
     ) -> None:
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 "INSERT INTO profile_conflicts (old_id, new_id, ts, firmness, p_evoke, p_overwrite, roll, outcome, "
                 "reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -860,7 +1000,7 @@ class MemoryStore:
 
     def add_evocation(self, fact_id: int, trigger_fact_id: int | None, ts: float) -> None:
         """唤起：这条旧事实被重新想起，等浮现区（扫描器）或思考模型来取。"""
-        with self.db:
+        with self.transaction():
             self.db.execute(
                 "INSERT INTO evocations (fact_id, trigger_fact_id, ts) VALUES (?, ?, ?)",
                 (fact_id, trigger_fact_id, ts),
@@ -870,7 +1010,7 @@ class MemoryStore:
         return [dict(r) for r in self.db.execute("SELECT * FROM evocations WHERE consumed = 0 ORDER BY id")]
 
     def consume_evocation(self, evocation_id: int) -> None:
-        with self.db:
+        with self.transaction():
             self.db.execute("UPDATE evocations SET consumed = 1 WHERE id = ?", (evocation_id,))
 
     # ---------- 事件线候选的查询（候选怎么取见 memory.candidates） ----------
