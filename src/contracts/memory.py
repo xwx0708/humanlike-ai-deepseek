@@ -120,3 +120,88 @@ class Person:
     id: int | None
     name: str  # 规范名
     aliases: list[str] = field(default_factory=list)
+
+
+# ---------- 记忆服务（《模块化改进建议》改进一）：回应模块只认这个接口 ----------
+# 方法按回应模块今天真在用的调用定，不为将来预留；新增方法要在决策日志里记一条。
+
+from typing import Protocol
+
+FORGET_ARCHIVE = "存进档案"  # 用户要求忘掉时的两种方式（D25：由用户选，不替用户默认）
+FORGET_ERASE = "彻底删除"
+
+
+@dataclass
+class MemoryContext:
+    """每轮交给思考模型的记忆内容，已经排好版；回应模块拿到就能拼提示词，不必知道怎么算出来的。
+
+    熟悉期只有 history（全部旧消息，D24）；运行期只有后面几段文字（D29、D30）。"""
+
+    history: list[ChatTurn] = field(default_factory=list)  # 熟悉期：全部旧消息，不含这一条
+    resident: str = ""  # 常驻栏（D17）
+    surfaced: str = ""  # 浮现区：自己冒头的记忆 + 被唤起的旧事实（D16、D26）
+    fresh: str = ""  # 新鲜记忆：刚说过的话（D30）
+    surfaced_ids: list[int] = field(default_factory=list)  # 浮现区里各片段的 id
+
+
+@dataclass
+class ForgetTarget:
+    """用户要求忘掉时，AI 理解为哪条事件线；等用户选方式时记着它。"""
+
+    thread_id: int
+    title: str
+
+
+@dataclass
+class ArchiveHit:
+    """档案搜索的一条结果（只在用户要求翻档案时产生，D26）。"""
+
+    segment_id: int
+    title: str
+    start_ts: float
+    score: float
+    excerpt: str
+
+
+class MemoryService(Protocol):
+    """记忆系统对回应模块的门。默认实现是概率海（memory.DefaultMemoryService），
+    对照组是只留最近 N 条的 memory.RecentWindowMemory。"""
+
+    def ingest(self, role: str, content: str, ts: float) -> ChatTurn:
+        """存入一条消息（对方说的、自己说的、自己做的事），返回存好的消息。"""
+
+    def context_for_turn(self, turn: ChatTurn, ts: float) -> MemoryContext:
+        """这一轮交给思考模型的记忆内容。turn 是刚 ingest 的这条消息。"""
+
+    def scan(self, ts: float) -> None:
+        """扫描器走一格（运行期每分钟一次，D26）。"""
+
+    def phase(self) -> str:
+        """runtime.lifecycle 的 FAMILIAR / RUNNING。"""
+
+    def report_context_used(self, prompt_tokens: int) -> None:
+        """回报思考模型这一轮实际用掉的上下文（D24）。"""
+
+    def mark_remember(self, turn_id: int) -> None:
+        """用户要求记住这条消息（D17 免竞争）。"""
+
+    def find_forget_target(self, query: str, ts: float) -> ForgetTarget | None:
+        """用户要求忘掉：按描述找最相关的事件线，找不到返回 None。"""
+
+    def pending_forget(self) -> ForgetTarget | None:
+        """上一轮问过、还等用户选方式的那件事。"""
+
+    def set_pending_forget(self, target: ForgetTarget | None) -> None: ...
+
+    def forget(self, thread_id: int, mode: str, ts: float) -> str:
+        """按用户选的方式（FORGET_ARCHIVE / FORGET_ERASE）忘掉，返回给用户看的一句说明。"""
+
+    def search_archive(self, query: str) -> list[ArchiveHit]:
+        """只在用户要求时翻档案（D26）。"""
+
+    def get_meta(self, key: str, default: str | None = None) -> str | None:
+        """小块键值状态（例如平台会话标识 owner_umo）。"""
+
+    def set_meta(self, key: str, value: str) -> None: ...
+
+    def close(self) -> None: ...
