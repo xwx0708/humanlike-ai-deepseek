@@ -29,11 +29,27 @@ from memory.store import MemoryStore
 from memory.subconscious import update_summary
 from runtime import config
 
+config.section_info("merge", "事件线合并", "夜间检查近期新建的事件线，与已有事件线重复时合并。")
 RECENT_DAYS = config.value(
-    "merge", "recent_days", 7.0
+    "merge",
+    "recent_days",
+    7.0,
+    "近期范围",
+    "多少天内新建的事件线参与合并检查。",
+    lo=1,
+    hi=60,
+    step=1,
+    unit="天",
 )  # 暂定：多少天内新建的线算"近期新建"。按日历时间（created_ts），不按记忆时钟
 MERGE_CONFIDENCE_MIN = config.value(
-    "merge", "confidence_min", 0.8
+    "merge",
+    "confidence_min",
+    0.8,
+    "合并置信阈值",
+    "把握不低于此值才合并。宜高于挂线阈值：错误合并比错误新建更难发现。",
+    lo=0,
+    hi=1,
+    step=0.05,
 )  # 暂定：比挂事件线的 0.6 更保守，错误合并比错误新建更难发现
 MAX_CANDIDATES = 8  # 暂定：每条线一次最多给模型看几条候选（一小批，Qwen 判断更稳）
 KEYWORD_TOP = 5  # 暂定：关键词重合取前几条

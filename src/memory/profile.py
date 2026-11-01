@@ -10,6 +10,7 @@
 import random
 from dataclasses import dataclass
 
+from contracts.knobs import knob
 from contracts.memory import ProfileFact
 from runtime import config
 
@@ -18,13 +19,26 @@ EVOKE, OVERWRITE, NOTHING = "唤起", "覆盖", "都不"
 
 @dataclass(frozen=True)
 class ConflictKnobs:
-    firm_half_life: float = 180.0  # 天：旧记录多久没被提到，牢固度减半
-    evoke_min: float = 0.2  # 最不牢固的旧记录被唤起的概率
-    evoke_max: float = 0.8  # 最牢固的旧记录被唤起的概率
-    overwrite_max: float = 0.8  # 最不牢固的旧记录被覆盖的概率
+    firm_half_life: float = knob(
+        180.0, "牢固度半衰期", "旧事实多久未被提及，牢固度减半。", lo=1, hi=3650, step=1, unit="天"
+    )  # 天：旧记录多久没被提到，牢固度减半
+    evoke_min: float = knob(
+        0.2, "最低唤起概率", "最不牢固的旧事实被唤起的概率。", lo=0, hi=1, step=0.05
+    )  # 最不牢固的旧记录被唤起的概率
+    evoke_max: float = knob(
+        0.8, "最高唤起概率", "最牢固的旧事实被唤起的概率。", lo=0, hi=1, step=0.05
+    )  # 最牢固的旧记录被唤起的概率
+    overwrite_max: float = knob(
+        0.8, "最高覆盖概率", "最不牢固的旧事实被覆盖（移入档案）的概率。", lo=0, hi=1, step=0.05
+    )  # 最不牢固的旧记录被覆盖的概率
 
 
-DEFAULT_KNOBS = config.knobs(ConflictKnobs(), "profile")
+DEFAULT_KNOBS = config.knobs(
+    ConflictKnobs(),
+    "profile",
+    "画像冲突",
+    "新事实与画像中的旧事实矛盾时，按旧事实的牢固度掷骰子：唤起 / 覆盖 / 都不（D16）。",
+)
 
 
 def firmness(fact: ProfileFact, idle_days: float, k: ConflictKnobs = DEFAULT_KNOBS) -> float:

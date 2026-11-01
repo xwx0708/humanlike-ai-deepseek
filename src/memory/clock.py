@@ -12,19 +12,33 @@
 from bisect import bisect_right
 from dataclasses import dataclass
 
+from contracts.knobs import knob
 from contracts.memory import SECONDS_PER_DAY
 from runtime import config
 
 
 @dataclass(frozen=True)
 class ClockKnobs:
-    speed: float = 10.0  # 对话期间的流速（倍）。暂定：每天聊 2 小时左右时，一天的使用约等于一天的记忆时间
-    idle_after: float = 25 * 60  # 秒：对话终止多久后开始减速（用户定 20～30 分钟）
-    idle_rate: float = 0.01  # 减速后的流速，相对正常流速（用户定）
-    freeze_after: float = 24 * 3600  # 秒：减速多久后停止流动（用户说"超过某个时限"，数值暂定）
+    speed: float = knob(
+        10.0, "对话流速", "对话期间记忆时间相对现实时间的倍数。", lo=1, hi=100, step=1, unit="倍"
+    )  # 对话期间的流速（倍）。暂定：每天聊 2 小时左右时，一天的使用约等于一天的记忆时间
+    idle_after: float = knob(
+        25 * 60, "减速延迟", "最后一条消息后多久开始减速。", lo=60, hi=7200, step=60, unit="秒"
+    )  # 秒：对话终止多久后开始减速（用户定 20～30 分钟）
+    idle_rate: float = knob(
+        0.01, "减速后流速", "减速后相对对话流速的比例。", lo=0, hi=1
+    )  # 减速后的流速，相对正常流速（用户定）
+    freeze_after: float = knob(
+        24 * 3600, "停止延迟", "减速多久后记忆时间完全停止。", lo=600, hi=2592000, step=600, unit="秒"
+    )  # 秒：减速多久后停止流动（用户说"超过某个时限"，数值暂定）
 
 
-DEFAULT_CLOCK = config.knobs(ClockKnobs(), "clock")
+DEFAULT_CLOCK = config.knobs(
+    ClockKnobs(),
+    "clock",
+    "记忆时钟",
+    "衰减按对话时间计，不按日历时间：对话时流速加快，停顿后减速，再久则停止。长时间不使用不会导致遗忘一切（D21）。",
+)
 
 
 def clock_of(store, k: ClockKnobs = DEFAULT_CLOCK) -> "MemoryClock":

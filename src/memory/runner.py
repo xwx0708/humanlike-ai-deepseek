@@ -14,6 +14,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 
+from contracts.knobs import knob
 from contracts.llm import ChatModel
 from memory.boundaries import conversation_closed
 from memory.clock import DEFAULT_CLOCK, clock_of
@@ -28,11 +29,24 @@ from runtime.lifecycle import RUNNING, Lifecycle
 
 @dataclass(frozen=True)
 class RunnerKnobs:
-    pause: float = DEFAULT_CLOCK.idle_after  # 秒：对话停顿多久后整理（暂定，与记忆时钟减速点相同）
-    night_hour: int = 3  # 几点以后算"夜间"（暂定）
+    pause: float = knob(
+        DEFAULT_CLOCK.idle_after, "停顿判定", "对话停顿多久后开始整理。", lo=60, hi=7200, step=60, unit="秒"
+    )  # 秒：对话停顿多久后整理（暂定，与记忆时钟减速点相同）
+    night_hour: int = knob(
+        3, "夜间合并时刻", "每天几点后执行一次事件线合并。", lo=0, hi=23
+    )  # 几点以后算"夜间"（暂定）
 
 
-DEFAULT_KNOBS = config.knobs(RunnerKnobs(), "runner")
+config.feature(
+    "mid_chat_split", "对话中途分批整理", "长时间不停顿的对话中，在新鲜记忆失效前先整理一批（D31）。"
+)
+config.feature("nightly_merge", "夜间合并事件线", "每天夜间合并重复的事件线。")
+DEFAULT_KNOBS = config.knobs(
+    RunnerKnobs(),
+    "runner",
+    "潜意识整理",
+    "对话停顿后由潜意识模型整理：切段、打分、挂事件线、调参；夜间合并重复的事件线。",
+)
 
 
 @dataclass

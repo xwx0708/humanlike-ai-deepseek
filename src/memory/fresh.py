@@ -12,6 +12,7 @@
 
 from dataclasses import dataclass
 
+from contracts.knobs import knob
 from contracts.memory import ChatTurn
 from memory.clock import MemoryClock, clock_of
 from memory.forgetting import ForgettingKnobs, strength
@@ -22,13 +23,42 @@ from runtime import config
 @dataclass(frozen=True)
 class FreshKnobs:
     # 半衰期 7 天、对话中流速 10 倍时：0.9 约是 2.5 小时前的话，0.92 约 2 小时，0.96 约 1 小时
-    floor: float = 0.9  # 强度不低于它的稳定在场（暂定）
-    half_life: float = ForgettingKnobs().base_half_life  # 天：还没打分，按平淡小事算
-    split_at: float = 0.92  # 最早一条未整理的消息降到这里，就中途整理一批（暂定，要早于 floor）
-    split_upto: float = 0.96  # 这一批整理到强度低于它的消息为止，最近约 1 小时的话留到下一批（暂定）
+    floor: float = knob(
+        0.9, "在场下限", "强度不低于此值的消息稳定在场，不经采样。", lo=0.5, hi=0.99
+    )  # 强度不低于它的稳定在场（暂定）
+    half_life: float = knob(
+        ForgettingKnobs().base_half_life,
+        "新鲜记忆半衰期",
+        "尚未打分的消息按此半衰期衰减。",
+        lo=0.5,
+        hi=60,
+        step=0.5,
+        unit="天",
+    )  # 天：还没打分，按平淡小事算
+    split_at: float = knob(
+        0.92,
+        "中途整理触发",
+        "最早一条未整理消息的强度降到此值时，对话中途先整理一批。须高于在场下限。",
+        lo=0.5,
+        hi=0.999,
+        step=0.005,
+    )  # 最早一条未整理的消息降到这里，就中途整理一批（暂定，要早于 floor）
+    split_upto: float = knob(
+        0.96,
+        "中途整理范围",
+        "这一批整理到强度低于此值的消息为止，更新的留到下一批。须高于触发值。",
+        lo=0.5,
+        hi=0.999,
+        step=0.005,
+    )  # 这一批整理到强度低于它的消息为止，最近约 1 小时的话留到下一批（暂定）
 
 
-DEFAULT_KNOBS = config.knobs(FreshKnobs(), "fresh")
+DEFAULT_KNOBS = config.knobs(
+    FreshKnobs(),
+    "fresh",
+    "新鲜记忆",
+    "运行期不另带聊天记录：刚说过的话作为几乎未衰减的记忆在场（D30、D31）。",
+)
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,7 @@ import random
 from dataclasses import dataclass
 
 from contracts.emotion import EmotionBaseline, ZeroBaseline
+from contracts.knobs import knob
 from contracts.llm import ChatModel
 from contracts.memory import SECONDS_PER_DAY, Segment
 from memory.clock import MemoryClock, clock_of
@@ -26,12 +27,23 @@ IN_MEMORY = ("active", "abstract")  # 还在记忆系统里的状态
 
 @dataclass(frozen=True)
 class SweepKnobs:
-    batch_size: int = 20  # 一批固定多少条（用户说"一定数量"，数值暂定）
-    keep_ratio: float = 0.05  # 留下抽象化的比例（用户定）
-    excerpt_chars: int = 300  # 给模型看的原文节选长度
+    batch_size: int = knob(
+        20, "批大小", "累计多少个待清理片段触发一次批处理。", lo=1, hi=200
+    )  # 一批固定多少条（用户说"一定数量"，数值暂定）
+    keep_ratio: float = knob(
+        0.05, "保留比例", "每批随机保留做关键词抽象的比例（至少 1 个）。", lo=0, hi=0.5
+    )  # 留下抽象化的比例（用户定）
+    excerpt_chars: int = knob(
+        300, "抽象原文节选", "做关键词抽象时给潜意识模型看的原文长度。", lo=50, hi=2000, step=50, unit="字"
+    )  # 给模型看的原文节选长度
 
 
-DEFAULT_KNOBS = config.knobs(SweepKnobs(), "sweep")
+DEFAULT_KNOBS = config.knobs(
+    SweepKnobs(),
+    "sweep",
+    "批量遗忘与档案库",
+    "跌破遗忘阈值的片段进入待清理队列，累计满一批处理：大部分移入档案库（原文保留，可检索），按比例随机保留少数做关键词抽象，重新开始衰减。",
+)
 
 
 @dataclass

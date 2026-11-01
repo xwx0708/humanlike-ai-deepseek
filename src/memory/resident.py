@@ -13,6 +13,7 @@
 
 from dataclasses import dataclass
 
+from contracts.knobs import knob
 from contracts.memory import Segment
 from memory.clock import MemoryClock, clock_of
 from memory.forgetting import strength
@@ -22,18 +23,37 @@ from runtime import config
 
 @dataclass(frozen=True)
 class ResidentKnobs:
-    seats: int = 20  # 竞争名额（用户定）
-    w_importance: float = 0.35  # 四项权重（用户定）
-    w_emotion: float = 0.25
-    w_activity: float = 0.25
-    w_recall: float = 0.15
-    ongoing_factor: float = 1.5  # 当下正在进行的事，得分乘这个系数（用户要求有系数，数值暂定）
-    activity_half_life: float = 14.0  # 天：多久没被提及，活跃度减半（暂定）
-    recall_saturation: float = 3.0  # 回忆频率 = 次数 / (次数 + 此值)，回忆 3 次得 0.5（暂定）
-    repeated_conversations: int = 3  # 在至少几场不同的对话里被提及，算"多次反复提及"（暂定）
+    seats: int = knob(20, "竞争席位", "参与竞争的常驻席位数。", lo=0, hi=100)  # 竞争名额（用户定）
+    w_importance: float = knob(
+        0.35, "权重：重要性", "得分 = Σ 权重 × 分项。四项权重之和建议为 1。", lo=0, hi=1, step=0.05
+    )  # 四项权重（用户定）
+    w_emotion: float = knob(0.25, "权重：情绪强度", "同上。", lo=0, hi=1, step=0.05)
+    w_activity: float = knob(
+        0.25, "权重：活跃度", "同上。活跃度按最近一次提及的时间衰减。", lo=0, hi=1, step=0.05
+    )
+    w_recall: float = knob(
+        0.15, "权重：回忆频率", "同上。回忆频率 = 次数 / (次数 + 饱和常数)。", lo=0, hi=1, step=0.05
+    )
+    ongoing_factor: float = knob(
+        1.5, "进行中系数", "尚未完结的事件线得分乘以此系数。", lo=1, hi=5, step=0.1
+    )  # 当下正在进行的事，得分乘这个系数（用户要求有系数，数值暂定）
+    activity_half_life: float = knob(
+        14.0, "活跃度半衰期", "多久未被提及，活跃度减半。", lo=1, hi=180, step=1, unit="天"
+    )  # 天：多久没被提及，活跃度减半（暂定）
+    recall_saturation: float = knob(
+        3.0, "回忆饱和常数", "回忆频率 = 次数 / (次数 + 此值)。", lo=0.5, hi=20, step=0.5
+    )  # 回忆频率 = 次数 / (次数 + 此值)，回忆 3 次得 0.5（暂定）
+    repeated_conversations: int = knob(
+        3, "多次提及判定", '在至少多少场不同对话中被提及，算免竞争的"多次提及"。', lo=2, hi=20
+    )  # 在至少几场不同的对话里被提及，算"多次反复提及"（暂定）
 
 
-DEFAULT_KNOBS = config.knobs(ResidentKnobs(), "resident")
+DEFAULT_KNOBS = config.knobs(
+    ResidentKnobs(),
+    "resident",
+    "常驻栏",
+    "免竞争项（画像出处、用户要求记住、多次提及）之外，其余事件线按加权得分竞争席位。常驻期间不衰减、不参与扫描。",
+)
 
 
 def score(stats: dict, idle_days: float, k: ResidentKnobs = DEFAULT_KNOBS) -> float:

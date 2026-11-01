@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 import jieba
 
+from contracts.knobs import knob
 from contracts.memory import Segment
 from memory.store import MemoryStore
 from runtime import config
@@ -29,13 +30,22 @@ SOURCES = ("最近活跃", "人物重合", "关键词重合", "档案人名")
 class CandidateRules:
     """数值都是暂定值，待用真实数据校准。"""
 
-    max_total: int = 20  # 用户方案：总数上限 20
-    recent: int = 8  # 最近活跃取几条
-    keyword: int = 8  # 关键词重合取几条
-    min_alias_len: int = 2  # 档案人名匹配时，叫法至少几个字（太短的"妈""哥"会误匹配）
+    max_total: int = knob(
+        20, "候选总数", "一次最多提供的候选事件线数。", lo=1, hi=100
+    )  # 用户方案：总数上限 20
+    recent: int = knob(8, "最近活跃", "从最近活跃的事件线中取几条。", lo=0, hi=50)  # 最近活跃取几条
+    keyword: int = knob(8, "关键词重合", "按 BM25 关键词重合取几条。", lo=0, hi=50)  # 关键词重合取几条
+    min_alias_len: int = knob(
+        2, "人名最短长度", "按人名匹配时，称呼至少几个字（过短易误匹配）。", lo=1, hi=5
+    )  # 档案人名匹配时，叫法至少几个字（太短的"妈""哥"会误匹配）
 
 
-DEFAULT_RULES = config.knobs(CandidateRules(), "candidates")
+DEFAULT_RULES = config.knobs(
+    CandidateRules(),
+    "candidates",
+    "事件线候选",
+    "给潜意识模型判断归属时提供的候选事件线：最近活跃 ∪ 关键词重合 ∪ 人物重合等来源的并集。",
+)
 
 _STOP = {
     "的",

@@ -306,8 +306,17 @@ def _resume_summaries(store: MemoryStore, model: ChatModel, sid: int) -> None:
 
 
 SEGMENT_BUDGET = config.value(
-    "runner", "segment_budget", 6000
+    "runner",
+    "segment_budget",
+    6000,
+    "切段批量",
+    "切段时每批消息的最大 token 数，须明显小于潜意识模型的上下文长度。",
+    lo=500,
+    hi=100000,
+    step=500,
+    unit="token",
 )  # 每批消息最多占多少 token（暂定）。Qwen 上下文 16384，要给提示词和输出留余量
+config.feature("batch_sweep", "批量遗忘", "关闭后跌破遗忘阈值的片段只停止参与采样，不移入档案库。")
 
 
 def split_turns(

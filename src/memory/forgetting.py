@@ -7,19 +7,63 @@
 import math
 from dataclasses import dataclass, replace
 
+from contracts.knobs import knob
+from runtime import config
+
 
 @dataclass(frozen=True)
 class ForgettingKnobs:
     """可调旋钮。默认值让平淡小事约三周被遗忘、极强烈的事约七个半月。"""
 
-    base_half_life: float = 7.0  # 平淡小事的半衰期（天）
-    emotion_max: float = 10.0  # 相对唤醒度为 1 时，半衰期放大的倍数
-    importance_max: float = 5.0  # 重要性为 1 时，半衰期放大的倍数
-    reinforce: float = 1.0  # 回忆加固力度：快忘光时被想起，半衰期最多变为 (1 + reinforce) 倍
-    position_bonus: float = 1.5  # 一场对话的首个、末个片段的半衰期倍数
-    forget_line: float = 0.1  # 强度低于此值即被遗忘
-    adjust_step_max: float = 3.0  # 小模型单次调整的上限（倍），下限为其倒数
-    adjust_total_max: float = 5.0  # 小模型累积调整的上限（倍），下限为其倒数
+    base_half_life: float = knob(
+        7.0, "基础半衰期", "平淡小事（a = i = 0）的半衰期。", lo=0.5, hi=60, step=0.5, unit="天"
+    )  # 平淡小事的半衰期（天）
+    emotion_max: float = knob(
+        10.0, "情绪倍数", "相对唤醒度为 1 时半衰期的放大倍数，按指数插值。", lo=1, hi=50, step=0.5
+    )  # 相对唤醒度为 1 时，半衰期放大的倍数
+    importance_max: float = knob(
+        5.0, "重要性倍数", "重要性为 1 时半衰期的放大倍数，按指数插值。", lo=1, hi=50, step=0.5
+    )  # 重要性为 1 时，半衰期放大的倍数
+    reinforce: float = knob(
+        1.0,
+        "巩固强度",
+        "提取巩固：被真正用到时 S 回满，H × (1 + 巩固强度 × (1 − S))。越接近遗忘时被想起，巩固越多。",
+        lo=0,
+        hi=5,
+        step=0.1,
+    )  # 回忆加固力度：快忘光时被想起，半衰期最多变为 (1 + reinforce) 倍
+    position_bonus: float = knob(
+        1.5, "首尾加成", "一场对话首个、末个片段的半衰期倍数（首因、近因效应）。", lo=1, hi=3, step=0.1
+    )  # 一场对话的首个、末个片段的半衰期倍数
+    forget_line: float = knob(
+        0.1, "遗忘阈值", "S 低于此值即视为遗忘：退出扫描采样，进入待清理队列。", lo=0.01, hi=0.5
+    )  # 强度低于此值即被遗忘
+    adjust_step_max: float = knob(
+        3.0,
+        "单次调参上限",
+        "潜意识模型对一条记忆单次调整半衰期的最大倍数，下限为其倒数（护栏）。",
+        lo=1,
+        hi=10,
+        step=0.5,
+        unit="倍",
+    )  # 小模型单次调整的上限（倍），下限为其倒数
+    adjust_total_max: float = knob(
+        5.0,
+        "累积调参上限",
+        "一条记忆累积调整的最大倍数，下限为其倒数（护栏）。",
+        lo=1,
+        hi=20,
+        step=0.5,
+        unit="倍",
+    )  # 小模型累积调整的上限（倍），下限为其倒数
+
+
+config.register(
+    ForgettingKnobs(),
+    "forgetting",
+    "遗忘曲线",
+    "记忆强度 S(t) = 0.5^(Δt / H)。半衰期 H = 基础半衰期 × 情绪倍数^a × 重要性倍数^i × 首尾加成，a 为相对唤醒度、i 为重要性（0～1）。",
+)
 
 
 def relative_arousal(arousal: float, baseline: float) -> float:

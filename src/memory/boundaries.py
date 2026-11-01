@@ -10,6 +10,7 @@ import re
 import time
 from dataclasses import dataclass
 
+from contracts.knobs import knob
 from contracts.memory import ChatTurn
 from memory.store import MemoryStore
 from runtime import config
@@ -19,12 +20,23 @@ from runtime import config
 class BoundaryRules:
     """阈值都是暂定值，待用真实聊天记录校准。"""
 
-    conversation_gap_minutes: float = 30  # 超过这么久没有消息，就是新的一场对话
-    max_turns: int = 30  # 距上一个候选边界（或对话开头）满这么多条消息，强制标一次
-    max_minutes: float = 60  # 距上一个候选边界满这么久，强制标一次
+    conversation_gap_minutes: float = knob(
+        30, "对话间隔", "超过这么久没有消息，视为新的一场对话。", lo=1, hi=1440, unit="分钟"
+    )  # 超过这么久没有消息，就是新的一场对话
+    max_turns: int = knob(
+        30, "最长条数", "距上一个候选边界满这么多条消息，强制标记一次。", lo=2, hi=500
+    )  # 距上一个候选边界（或对话开头）满这么多条消息，强制标一次
+    max_minutes: float = knob(
+        60, "最长时长", "距上一个候选边界满这么久，强制标记一次。", lo=1, hi=1440, unit="分钟"
+    )  # 距上一个候选边界满这么久，强制标一次
 
 
-DEFAULT_RULES = config.knobs(BoundaryRules(), "boundaries")
+DEFAULT_RULES = config.knobs(
+    BoundaryRules(),
+    "boundaries",
+    "切段边界",
+    "切段第一层规则：按时间间隔划分对话，并在过长处强制标记候选边界。",
+)
 
 # 出现在句首才算的信号："对了"在句中常常不是换话题
 _LEADING = (

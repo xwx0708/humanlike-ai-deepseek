@@ -261,7 +261,14 @@ THREAD_SCHEMA: dict[str, Any] = {
 }
 
 THREAD_CONFIDENCE_MIN = config.value(
-    "runner", "thread_confidence_min", 0.6
+    "runner",
+    "thread_confidence_min",
+    0.6,
+    "挂线置信阈值",
+    "潜意识模型判断片段属于某事件线的把握低于此值时，新建事件线。",
+    lo=0,
+    hi=1,
+    step=0.05,
 )  # 把握低于此值就新建（暂定，待用真实数据校准）
 
 

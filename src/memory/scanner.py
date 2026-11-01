@@ -21,6 +21,7 @@ import random
 from collections import defaultdict
 from dataclasses import dataclass, field, replace
 
+from contracts.knobs import knob
 from contracts.memory import Segment
 from memory.candidates import bm25, tokenize
 from memory.clock import MemoryClock, clock_of
@@ -34,19 +35,52 @@ IN_MEMORY = ("active", "abstract")
 
 @dataclass(frozen=True)
 class ScannerKnobs:
-    buffer_size: int = 4  # 浮现区容量（设想文档 3～5，取中间，暂定）
-    threshold: float = 0.6  # sigmoid 的阈值（暂定）
+    buffer_size: int = knob(
+        4, "浮现区容量", "浮现区可同时容纳的片段数，FIFO 置换。浮现本身不触发巩固。", lo=1, hi=12
+    )  # 浮现区容量（设想文档 3～5，取中间，暂定）
+    threshold: float = knob(
+        0.6, "浮现阈值", "sigmoid 的中心：S + 启动加成等于它时，p 为速率上限的一半。", lo=0, hi=1.5, step=0.05
+    )  # sigmoid 的阈值（暂定）
     # 温度由话题而定（用户定，D26）：正专注于一个话题就是专注（低温），在闲聊就是发散（高温）
-    temp_focus: float = 0.1  # 专注时的温度（暂定）
-    temp_diffuse: float = 0.3  # 闲聊时的温度（暂定）
-    focus_turns: int = 6  # 同一个话题连续聊到几条用户消息，算完全专注（暂定）
-    rate: float = 0.02  # 每分钟的浮现强度上限：最强、最相关的记忆约每 50 分钟冒头一次（暂定）
-    priming_max: float = 0.5  # 启动加成的上限（暂定）
-    person_bonus: float = 0.3  # 人物重合给的启动加成（暂定）
-    negative_damp: float = 0.6  # 负面且话题无关时，浮现概率最多打几折（暂定）
+    temp_focus: float = knob(
+        0.1, "专注温度 T", "专注于同一话题时的温度：低温使采样更确定，强记忆更集中地浮现。", lo=0.01, hi=1
+    )  # 专注时的温度（暂定）
+    temp_diffuse: float = knob(
+        0.3, "发散温度 T", "闲聊时的温度：高温使采样更随机，弱记忆也有机会浮现。", lo=0.01, hi=1
+    )  # 闲聊时的温度（暂定）
+    focus_turns: int = knob(
+        6, "专注判定", "同一话题连续多少条用户消息算完全专注（温度降到专注温度）。", lo=1, hi=30
+    )  # 同一个话题连续聊到几条用户消息，算完全专注（暂定）
+    rate: float = knob(
+        0.02,
+        "速率上限",
+        "每分钟浮现强度的上限。0.02 时最强、最相关的记忆约每 50 分钟浮现一次。",
+        lo=0.001,
+        hi=0.5,
+        step=0.001,
+    )  # 每分钟的浮现强度上限：最强、最相关的记忆约每 50 分钟冒头一次（暂定）
+    priming_max: float = knob(
+        0.5,
+        "启动加成上限",
+        "启动效应（priming）：与当前话题关键词相关的片段获得的最大加成。",
+        lo=0,
+        hi=1.5,
+        step=0.05,
+    )  # 启动加成的上限（暂定）
+    person_bonus: float = knob(
+        0.3, "人物加成", "片段涉及的人物与当前话题重合时的加成。", lo=0, hi=1.5, step=0.05
+    )  # 人物重合给的启动加成（暂定）
+    negative_damp: float = knob(
+        0.6, "负面抑制", "负面片段在话题无关时，浮现概率最多下降的比例。", lo=0, hi=1, step=0.05
+    )  # 负面且话题无关时，浮现概率最多打几折（暂定）
 
 
-DEFAULT_KNOBS = config.knobs(ScannerKnobs(), "scanner")
+DEFAULT_KNOBS = config.knobs(
+    ScannerKnobs(),
+    "scanner",
+    "扫描与浮现",
+    "扫描器按月份分区轮询，每分钟一个分区。对每个片段做伯努利采样：P = 1 − e^(−p·Δt)，p = 速率上限 · σ((S + 启动加成 − 阈值) / T)。命中者进入浮现区。",
+)
 
 
 @dataclass

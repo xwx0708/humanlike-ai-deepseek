@@ -12,6 +12,11 @@ from memory.forgetting import Trace, recall
 from memory.store import MemoryStore
 from runtime import config
 
+config.section_info(
+    "archive",
+    "档案库检索",
+    "档案库检索：jieba 分词 + BM25 排序，在已归档片段的标题和原文中检索。只在用户要求时执行（D26）。",
+)
 TO_ARCHIVE = FORGET_ARCHIVE  # 名字沿用；定义在 contracts，回应模块也要用
 ERASE = FORGET_ERASE
 
@@ -30,8 +35,18 @@ def forget_thread(store: MemoryStore, tid: int, mode: str, ts: float) -> str:
 def search_archive(
     store: MemoryStore,
     query: str,
-    limit: int = config.value("archive", "limit", 5),
-    excerpt_chars: int = config.value("archive", "excerpt_chars", 200),
+    limit: int = config.value("archive", "limit", 5, "返回条数", "一次检索返回的最多结果数。", lo=1, hi=50),
+    excerpt_chars: int = config.value(
+        "archive",
+        "excerpt_chars",
+        200,
+        "结果节选长度",
+        "每条结果给思考模型看的原文长度。",
+        lo=50,
+        hi=5000,
+        step=50,
+        unit="字",
+    ),
 ) -> list[ArchiveHit]:
     """在档案里搜索（只搜已经移出记忆系统的片段）：jieba 分词 + BM25，对象是片段标题和消息原文。
     只在用户要求时调用（D25）。"""
