@@ -6,33 +6,21 @@
 - 浮现的记忆说不说由思考模型按当下语境判断（D29），这里只负责给它看。
 - 用户对记忆的要求用关键词识别（D29），处理结果作为"此刻要注意的事"告诉思考模型，由它用自己的话说。
 
+记忆只通过 contracts.memory.MemoryService 访问（《模块化改进建议》改进一）：这里不知道记忆怎么算。
 模型调用不在这里：插件拿 Prompt 去调 AstrBot 里配置的思考模型（D29），再把回复和用量交回 on_reply。
 """
 
-import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from memory.archive import forget_thread, search_archive
-from memory.boundaries import ingest_turn
-from memory.fresh import drop_fresh, fresh_block, fresh_memories
-from memory.lifecycle import report_context_used
-from memory.profile import take_evocations
-from memory.resident import resident_block
-from memory.scanner import Scanner, focus_of, search_memory
-from memory.store import MemoryStore
+from contracts.memory import MemoryService
 from response import requests
 from response.attachments import Attachment
 from runtime import config
-from runtime.lifecycle import FAMILIAR, Lifecycle
+from runtime.lifecycle import FAMILIAR
 
-SURFACED_HEADER = (
-    "以下是你此刻自己想起来的事。说不说、怎么说，由你根据当下的语境判断，不必每条都提；"
-    "清晰度低的只是模糊印象，可以说记不太清。"
-)
 # 熟悉期带着全部旧聊天记录，模型会跟着自己以前的说话方式走，人设被冲淡；每轮在记录之后、这一条之前提醒一次
 PERSONA_REMINDER = "回复时保持上面人设里的身份和口气，不要被前面聊天记录里的说话方式带偏。"
-PENDING_KEY = "pending_forget"  # 要求忘掉、等用户选方式时，记下是哪件事
 
 
 @dataclass
@@ -47,43 +35,29 @@ class Prompt:
 
 
 class Responder:
-    def __init__(
-        self,
-        store: MemoryStore,
-        scanner: Scanner,
-        persona: Callable[[], str],
-        phase: Callable[[], str] = lambda: Lifecycle().phase,
-    ):
-        self.store = store
-        self.scanner = scanner
+    def __init__(self, memory: MemoryService, persona: Callable[[], str]):
+        self.memory = memory
         self.persona = persona
-        self.phase = phase  # 生命周期由后台任务推进，每轮重新读
 
     def on_user_message(self, text: str, ts: float, attachments: Sequence[Attachment] = ()) -> Prompt:
         """attachments：对方这一条发来的文件和图片（D38）。全文只放进这一轮的提示词；记忆里只记发来了什么和开头一段。"""
         remembered = _join_lines(text, *(a.memory_note() for a in attachments))
-        turn = ingest_turn(self.store, "user", remembered, ts)
+        turn = self.memory.ingest("user", remembered, ts)
         notes = self._handle_requests(text, turn.id, ts)  # 对记忆的要求只看对方打的字
-        self.scanner.refresh_buffer(ts)
         prompt_text = _join(text, *(a.prompt_block() for a in attachments))
         images = [a.image_path for a in attachments if a.kind == "图片"]
         persona = self.persona()
-        if self.phase() == FAMILIAR:
-            history = [t for t in self.store.all_turns(include_forgotten=False) if t.id != turn.id]
-            contexts = [{"role": t.role, "content": t.content} for t in history]
+        ctx = self.memory.context_for_turn(turn, ts)
+        if self.memory.phase() == FAMILIAR:
+            contexts = [{"role": t.role, "content": t.content} for t in ctx.history]
             if persona and contexts and config.enabled("persona_reminder"):
                 contexts.append({"role": "system", "content": PERSONA_REMINDER})
             return Prompt(_join(persona, _notes_block(notes)), contexts, prompt_text, notes, images)
-        # 运行期：话题和专注程度交给扫描器，下一次扫描按新的话题充电、按专注程度定温度（D26）
-        self.scanner.set_topic(remembered)
-        self.scanner.set_focus(focus_of(self.store, turn.conversation_id))
-        fresh = [m for m in fresh_memories(self.store, ts) if m.turn.id != turn.id]  # 这一条本身单独给
-        surfaced = drop_fresh(self.store, self.scanner.buffer, fresh)
         system = _join(
             persona,
-            resident_block(self.store),
-            _surfaced_block(surfaced, take_evocations(self.store)),
-            fresh_block(fresh),
+            ctx.resident,
+            ctx.surfaced,
+            ctx.fresh,
             _notes_block(notes),
             PERSONA_REMINDER if persona and config.enabled("persona_reminder") else "",
         )
@@ -91,53 +65,48 @@ class Responder:
 
     def on_reply(self, text: str, ts: float, prompt_tokens: int | None = None) -> None:
         """思考模型回复以后：存进记忆；回报实际用掉的上下文（熟悉期据此判断何时启动，D24）。"""
-        ingest_turn(self.store, "assistant", text, ts)
+        self.memory.ingest("assistant", text, ts)
         if prompt_tokens:
-            report_context_used(self.store, prompt_tokens)
+            self.memory.report_context_used(prompt_tokens)
 
     def on_action(self, note: str, ts: float) -> None:
         """AI 自己做了一件事（换头像、发说说等，D35）：作为它自己说过的一句话记进记忆，以后能想起来。"""
-        ingest_turn(self.store, "assistant", f"（{note}）", ts)
+        self.memory.ingest("assistant", f"（{note}）", ts)
 
     # ---------- 用户对记忆的要求（D29：关键词识别） ----------
 
     def _handle_requests(self, text: str, turn_id: int, ts: float) -> list[str]:
-        pending = self.store.get_meta(PENDING_KEY)
-        self.store.set_meta(PENDING_KEY, "")  # 只等紧接着的一条：用户没选、聊别的了，就算放下了
+        pending = self.memory.pending_forget()
+        self.memory.set_pending_forget(None)  # 只等紧接着的一条：用户没选、聊别的了，就算放下了
         if pending:
             choice = requests.detect_choice(text)
-            target = json.loads(pending)
             if choice == "取消":
-                return [f"对方决定不忘掉「{target['title']}」了，照常记着。"]
+                return [f"对方决定不忘掉「{pending.title}」了，照常记着。"]
             if choice:  # D25：由用户选，选了才执行
-                said = forget_thread(self.store, target["thread"], choice, ts)
-                return [f"已按对方的选择处理「{target['title']}」：{said}用你自己的话告诉对方。"]
+                said = self.memory.forget(pending.thread_id, choice, ts)
+                return [f"已按对方的选择处理「{pending.title}」：{said}用你自己的话告诉对方。"]
         kind = requests.detect(text) if config.enabled("keyword_requests") else None
         if kind == requests.REMEMBER:
-            self.store.mark_remember(turn_id)  # 整理时含这条消息的片段算用户要求记住（D17 免竞争）
+            self.memory.mark_remember(turn_id)
             return ["对方要你记住这件事，已经记下了。自然地答应就好。"]
         if kind == requests.FORGET:
             return self._ask_forget(text, ts)
         if kind == requests.ARCHIVE:  # D26：只有用户要求才翻档案
-            return [_archive_note(search_archive(self.store, requests.strip_keywords(text) or text))]
+            return [_archive_note(self.memory.search_archive(requests.strip_keywords(text) or text))]
         return []
 
     def _ask_forget(self, text: str, ts: float) -> list[str]:
-        """暂定：用去掉关键词后的话在记忆里搜，取最相关的片段所在的事件线，请思考模型跟用户确认。"""
-        for hit in search_memory(self.store, requests.strip_keywords(text) or text, ts, limit=3):
-            tids = self.store.threads_of_segment(hit.segment_id)
-            if tids:
-                title = self.store.thread_card(tids[0])["title"]
-                self.store.set_meta(
-                    PENDING_KEY, json.dumps({"thread": tids[0], "title": title}, ensure_ascii=False)
-                )
-                ask = (
-                    f"对方要你忘掉一件事，你理解为「{title}」。先跟对方确认是不是这件，并问清楚要"
-                    "「彻底删除」（再也找不回来）还是「存进档案」（以后要找还能找到）。"
-                    "对方明确选择之前，不要说已经忘了。"
-                )
-                return [ask]
-        return ["对方要你忘掉一件事，但你没想起是哪件。问清楚是哪件事。"]
+        """请思考模型跟用户确认是哪件事、要哪种方式。"""
+        target = self.memory.find_forget_target(requests.strip_keywords(text) or text, ts)
+        if target is None:
+            return ["对方要你忘掉一件事，但你没想起是哪件。问清楚是哪件事。"]
+        self.memory.set_pending_forget(target)
+        ask = (
+            f"对方要你忘掉一件事，你理解为「{target.title}」。先跟对方确认是不是这件，并问清楚要"
+            "「彻底删除」（再也找不回来）还是「存进档案」（以后要找还能找到）。"
+            "对方明确选择之前，不要说已经忘了。"
+        )
+        return [ask]
 
 
 def _archive_note(hits: list) -> str:
@@ -146,17 +115,6 @@ def _archive_note(hits: list) -> str:
     lines = ["对方要你翻以前的记录，档案里找到这些原文（按相关程度排列）："]
     for h in hits:
         lines.append(f"- {h.title}：{h.excerpt}")
-    return "\n".join(lines)
-
-
-def _surfaced_block(items: list, evoked: list[str] = ()) -> str:
-    """浮现区：自己冒头的记忆，加上被唤起的旧事实（D16）。"""
-    if not items and not evoked:
-        return ""
-    lines = [SURFACED_HEADER]
-    for s in items:
-        lines.append(f"- （清晰度 {s.clarity:.1f}）{s.text}")
-    lines += [f"- {e}" for e in evoked]
     return "\n".join(lines)
 
 

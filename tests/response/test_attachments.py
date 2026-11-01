@@ -5,6 +5,7 @@ import zipfile
 import pytest
 
 from memory.scanner import Scanner
+from memory.service import DefaultMemoryService
 from memory.store import MemoryStore
 from response import attachments as att
 from response.attachments import read_file
@@ -105,7 +106,7 @@ def test_responder_puts_full_text_in_prompt_but_only_a_note_in_memory(store, tmp
     monkeypatch.setattr(att, "MEMORY_CHARS", 4)
     (tmp_path / "需求.txt").write_text("要做一个会遗忘的 AI", encoding="utf-8")
     (tmp_path / "图.png").write_bytes(b"png")
-    r = Responder(store, Scanner(store), lambda: "", phase=lambda: RUNNING)
+    r = Responder(DefaultMemoryService(store, Scanner(store), phase=lambda: RUNNING), lambda: "")
     p = r.on_user_message("帮我看看", 0, [read_file(tmp_path / "需求.txt"), read_file(tmp_path / "图.png")])
     assert "要做一个会遗忘的 AI" in p.prompt and "图片已附上" in p.prompt
     assert p.image_paths == [str(tmp_path / "图.png")]

@@ -38,21 +38,20 @@ class HumanlikePlugin(Star):
             sys.path.insert(0, str(root / "src"))
 
         from action.qq_self import QQSelf
-        from llm import subconscious_model
-        from llm.settings import load_settings
-        from memory.scanner import Scanner
-        from memory.store import MemoryStore
+        from llm import load_settings, subconscious_model
+        from memory import DefaultMemoryService, background_job
         from response.background import make_scheduler
         from response.persona import load_persona
         from response.responder import Responder
 
         self.owner = str(config.get("owner_qq") or os.environ.get("HUMANLIKE_OWNER_QQ") or "").strip()
-        self.store = MemoryStore()
-        self.scanner = Scanner(self.store)
-        self.responder = Responder(self.store, self.scanner, load_persona)
+        self.memory = DefaultMemoryService()  # 记忆只通过 contracts.memory.MemoryService 访问
+        self.responder = Responder(self.memory, load_persona)
         self.qq = QQSelf()
         # 潜意识模型仍在本项目 .env；思考模型用 AstrBot 里填的（D29）
-        self.scheduler = make_scheduler(subconscious_model(), load_settings().thinking_context_limit)
+        self.scheduler = make_scheduler(
+            background_job(subconscious_model(), load_settings().thinking_context_limit)
+        )
         self._task: asyncio.Task | None = None
 
     async def initialize(self):
@@ -66,7 +65,7 @@ class HumanlikePlugin(Star):
         reported = 0
         while True:
             try:
-                self.scanner.tick(time.time())  # 扫描器用的是收发消息这个线程的连接，在这里跑
+                self.memory.scan(time.time())  # 扫描器用的是收发消息这个线程的连接，在这里跑
                 await asyncio.to_thread(self.scheduler.run_pending)  # 整理可能要几分钟，放到别的线程
                 for name, ts, err in self.scheduler.errors[reported:]:
                     logger.error(f"[类人AI] 后台任务「{name}」出错：{err}")
@@ -89,7 +88,7 @@ class HumanlikePlugin(Star):
         attachments = await self._attachments(event)
         if not text and not attachments:
             return  # 表情、戳一戳等没有文字也没有文件的消息，暂不回
-        self.store.set_meta("owner_umo", event.unified_msg_origin)  # 以后主动发消息用（D29）
+        self.memory.set_meta("owner_umo", event.unified_msg_origin)  # 以后主动发消息用（D29）
         prompt = self.responder.on_user_message(text, time.time(), attachments)
         try:
             provider_id = await self.context.get_current_chat_provider_id(event.unified_msg_origin)
@@ -247,4 +246,4 @@ class HumanlikePlugin(Star):
     async def terminate(self):
         if self._task is not None:
             self._task.cancel()
-        self.store.close()
+        self.memory.close()

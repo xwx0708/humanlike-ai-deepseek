@@ -6,10 +6,11 @@ from contracts.memory import EmotionScore, Segment
 from llm import FakeModel
 from memory.lifecycle import context_used
 from memory.scanner import Scanner, Surfaced
+from memory.service import PENDING_KEY, DefaultMemoryService
 from memory.store import MemoryStore
 from memory.subconscious import consolidate
 from response import requests
-from response.responder import PENDING_KEY, PERSONA_REMINDER, Responder
+from response.responder import PERSONA_REMINDER, Responder
 from runtime.lifecycle import FAMILIAR, RUNNING
 
 MIN = 60.0
@@ -24,7 +25,7 @@ def store():
 
 
 def responder(store, phase=RUNNING):
-    return Responder(store, Scanner(store), lambda: PERSONA, phase=lambda: phase)
+    return Responder(DefaultMemoryService(store, Scanner(store), phase=lambda: phase), lambda: PERSONA)
 
 
 def old_thread(store, title="他妈妈住院", ts=0.0):
@@ -86,7 +87,7 @@ def test_surfaced_memories_shown_but_not_duplicated(store):
     r.on_user_message("在吗", 86400)
     now_turn = store.all_turns()[-1]
     fresh_seg = store.add_segment(Segment(None, now_turn.conversation_id, "他问在不在", 0, 0, [now_turn.id]))
-    r.scanner.buffer = [
+    r.memory.scanner.buffer = [
         Surfaced(seg.id, seg.title, 0.4, -0.6, 0),
         Surfaced(fresh_seg.id, "他问在不在", 1.0, 0, 0),
     ]

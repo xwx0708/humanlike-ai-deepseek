@@ -5,6 +5,7 @@
 关键词表是暂定的，按实际聊天再补。
 """
 
+from contracts.memory import FORGET_ARCHIVE, FORGET_ERASE
 from runtime import config
 
 REMEMBER = "记住"
@@ -55,15 +56,13 @@ def detect(text: str) -> str | None:
 
 
 def detect_choice(text: str) -> str | None:
-    """要求忘掉之后的回答：返回 memory.archive 的方式（"彻底删除" / "存进档案"），"取消"，或 None（没选）。"""
-    from memory.archive import ERASE, TO_ARCHIVE
-
+    """要求忘掉之后的回答：返回 contracts.memory 里的方式（"彻底删除" / "存进档案"），"取消"，或 None（没选）。"""
     if any(w in text for w in CHOICE_CANCEL):
         return "取消"
     if any(w in text for w in CHOICE_ERASE):
-        return ERASE
+        return FORGET_ERASE
     if any(w in text for w in CHOICE_ARCHIVE):
-        return TO_ARCHIVE
+        return FORGET_ARCHIVE
     return None
 
 
