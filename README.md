@@ -63,7 +63,7 @@ docker compose up -d            # 下载并启动 NapCat、AstrBot 的官方镜�
 
    如果觉得好用，记得去给原作者点个 ⭐ Star。
 
-4. 打开 `http://127.0.0.1:8791`（设置页）调整参数：遗忘曲线、扫描与浮现、启动比例、模型、数据文件夹等。每项旁的 ⓘ 悬停可看解释；也能关闭功能、自定义触发说法。改完重启 AstrBot 生效：`docker compose restart astrbot`。
+4. 打开 `http://127.0.0.1:8791`（设置页）调整参数：遗忘曲线、扫描与浮现、启动比例、模型、数据文件夹等。每项旁的 ⓘ 悬停可看解释；也能关闭功能、自定义触发说法、换掉遗忘曲线和浮现策略（或把自己写的放进 `data/plugins/`，见 `src/contracts/plugins.py`）。改完重启 AstrBot 生效：`docker compose restart astrbot`。
 
 完整步骤、手动部署和装好后要核对的事见 [03-回应/部署.md](03-回应/部署.md)。
 
