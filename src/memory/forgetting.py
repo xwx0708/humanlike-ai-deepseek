@@ -8,7 +8,7 @@ import math
 from dataclasses import dataclass, replace
 
 from contracts.knobs import knob
-from runtime import config
+from runtime import config, plugins
 
 
 @dataclass(frozen=True)
@@ -107,9 +107,62 @@ def initial_half_life(
     )
 
 
+# ---------- 遗忘曲线的可替换点（改进三，D42）：contracts.plugins.DecayModel ----------
+
+
+class ExponentialDecay:
+    """默认：S = 0.5^(Δt / H)，每过一个半衰期减半（设想文档的曲线）。"""
+
+    name = "指数衰减"
+
+    def strength(self, half_life: float, elapsed_days: float) -> float:
+        return 0.5 ** (max(0.0, elapsed_days) / half_life)
+
+    def reinforced_half_life(self, half_life: float, strength_now: float, reinforce: float) -> float:
+        return half_life * (1.0 + reinforce * (1.0 - strength_now))  # 快忘光时被想起，加固最多（D20）
+
+
+class PowerLawDecay(ExponentialDecay):
+    """幂律：S = 1 / (1 + Δt / H)。同样在 H 时降到一半，但尾巴长得多：旧事忘得慢。"""
+
+    name = "幂律衰减"
+
+    def strength(self, half_life: float, elapsed_days: float) -> float:
+        return 1.0 / (1.0 + max(0.0, elapsed_days) / half_life)
+
+
+class NoDecay:
+    """调试用：永远不忘，半衰期也不变。"""
+
+    name = "不遗忘"
+
+    def strength(self, half_life: float, elapsed_days: float) -> float:
+        return 1.0
+
+    def reinforced_half_life(self, half_life: float, strength_now: float, reinforce: float) -> float:
+        return half_life
+
+
+DECAY_MODELS = {m.name: m for m in (ExponentialDecay(), PowerLawDecay(), NoDecay())}
+DECAY = plugins.choose(
+    "decay",
+    config.value(
+        "forgetting",
+        "decay_model",
+        ExponentialDecay.name,
+        "衰减曲线",
+        "强度随时间下降的形状。指数衰减是默认；幂律衰减尾巴更长、旧事忘得慢；不遗忘只用于调试。"
+        "也可以把自己写的曲线放进数据文件夹的 plugins/（见 contracts/plugins.py）。",
+        kind="select",
+        options=plugins.names("decay", DECAY_MODELS),
+    ),
+    DECAY_MODELS,
+)
+
+
 def strength(half_life: float, days_since_last_recall: float) -> float:
-    """当前强度：刚记下或刚被想起时为 1，每过一个半衰期减半。"""
-    return 0.5 ** (max(0.0, days_since_last_recall) / half_life)
+    """当前强度：刚记下或刚被想起时为 1，之后按选用的衰减曲线下降（默认每过一个半衰期减半）。"""
+    return DECAY.strength(half_life, days_since_last_recall)
 
 
 def days_until_forgotten(half_life: float, k: ForgettingKnobs) -> float:
@@ -137,7 +190,5 @@ def recall(trace: Trace, now: float, k: ForgettingKnobs) -> Trace:
 
     刚聊过又提（强度接近 1）几乎不加固；快忘光时被想起，加固最多，半衰期最多变为 (1 + reinforce) 倍。
     """
-    gain = 1.0 + k.reinforce * (1.0 - trace.strength_at(now))
-    return replace(
-        trace, half_life=trace.half_life * gain, last_recall=now, recall_count=trace.recall_count + 1
-    )
+    new_half_life = DECAY.reinforced_half_life(trace.half_life, trace.strength_at(now), k.reinforce)
+    return replace(trace, half_life=new_half_life, last_recall=now, recall_count=trace.recall_count + 1)

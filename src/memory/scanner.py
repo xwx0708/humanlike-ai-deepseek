@@ -23,12 +23,13 @@ from dataclasses import dataclass, field, replace
 
 from contracts.knobs import knob
 from contracts.memory import Segment
+from contracts.plugins import Candidate
 from memory.candidates import bm25, tokenize
 from memory.clock import MemoryClock, clock_of
 from memory.forgetting import Trace, recall
 from memory.resident import effective_strength, is_resident_segment
 from memory.store import MemoryStore
-from runtime import config
+from runtime import config, plugins
 
 IN_MEMORY = ("active", "abstract")
 
@@ -83,6 +84,77 @@ DEFAULT_KNOBS = config.knobs(
 )
 
 
+# ---------- 浮现策略的可替换点（改进三，D42）：contracts.plugins.SurfacePolicy ----------
+
+
+class ProbabilisticSurfacing:
+    """默认：设想文档的伯努利采样。p = rate · σ((S + 启动加成 − 阈值) / T)，P = 1 − e^(−p·Δt)；
+    负面记忆在话题无关时少冒头。"""
+
+    name = "概率浮现"
+
+    def probability(self, c: Candidate, temperature: float, k: "ScannerKnobs") -> float:
+        """每分钟的浮现强度（0～rate）。"""
+        x = (c.strength + c.priming - k.threshold) / temperature
+        p = 1 / (1 + math.exp(-max(-50.0, min(50.0, x))))
+        valence = c.segment.emotion.valence if c.segment.emotion else 0.0
+        if valence < 0:  # 负面记忆：话题不相关时少冒头，相关时照常
+            related = min(1.0, c.priming / (0.5 * k.priming_max))  # 关键词最相关或人物重合即算完全相关
+            p *= 1 - k.negative_damp * (-valence) * (1 - related)
+        return k.rate * p
+
+    def surface(
+        self, candidates: list[Candidate], temperature: float, k: "ScannerKnobs", rng: random.Random
+    ) -> list[Segment]:
+        out = []
+        for c in candidates:
+            hit = 1 - math.exp(-self.probability(c, temperature, k) * max(0.0, c.minutes))
+            if rng.random() < hit:
+                out.append(c.segment)
+        return out
+
+
+class RelevanceSurfacing:
+    """纯相关度检索：不抽样，只把和当下话题最相关的几条（启动加成 × 强度最高）拿出来；话题无关的不冒头。"""
+
+    name = "相关度检索"
+
+    def surface(
+        self, candidates: list[Candidate], temperature: float, k: "ScannerKnobs", rng: random.Random
+    ) -> list[Segment]:
+        related = [c for c in candidates if c.priming > 0]
+        related.sort(key=lambda c: -(c.priming * c.strength))
+        return [c.segment for c in related[: k.buffer_size]]
+
+
+class NoSurfacing:
+    """关闭浮现：记忆只在新鲜记忆、常驻栏和用户要求翻档案时出现。"""
+
+    name = "关闭浮现"
+
+    def surface(
+        self, candidates: list[Candidate], temperature: float, k: "ScannerKnobs", rng: random.Random
+    ) -> list[Segment]:
+        return []
+
+
+SURFACE_POLICIES = {p.name: p for p in (ProbabilisticSurfacing(), RelevanceSurfacing(), NoSurfacing())}
+DEFAULT_POLICY = plugins.choose(
+    "surface",
+    config.value(
+        "scanner",
+        "surface_policy",
+        ProbabilisticSurfacing.name,
+        "浮现策略",
+        "哪些记忆冒头进浮现区。概率浮现是默认（伯努利采样）；相关度检索只取和话题最相关的几条、不抽样；"
+        "关闭浮现则记忆只在新鲜记忆、常驻栏和翻档案时出现。也可以把自己写的策略放进数据文件夹的 plugins/。",
+        kind="select",
+        options=plugins.names("surface", SURFACE_POLICIES),
+    ),
+    SURFACE_POLICIES,
+)
+
+
 @dataclass
 class Surfaced:
     segment_id: int
@@ -102,6 +174,7 @@ class Scanner:
     _cursor: int = 0
     _last_scan: dict[int, float] = field(default_factory=dict)
     focus: float = 0.5  # 0 = 闲聊发散，1 = 专注于一个话题；由 set_focus / focus_of 给出
+    policy: object = DEFAULT_POLICY  # contracts.plugins.SurfacePolicy：按设置选用
 
     @property
     def temperature(self) -> float:
@@ -151,15 +224,9 @@ class Scanner:
         return [parts[m] for m in sorted(parts)]
 
     def probability(self, seg: Segment, strength: float) -> float:
-        """每分钟的浮现强度（0～rate）。"""
-        prim = self.priming.get(seg.id, 0.0)
-        x = (strength + prim - self.k.threshold) / self.temperature
-        p = 1 / (1 + math.exp(-max(-50.0, min(50.0, x))))
-        valence = seg.emotion.valence if seg.emotion else 0.0
-        if valence < 0:  # 负面记忆：话题不相关时少冒头，相关时照常
-            related = min(1.0, prim / (0.5 * self.k.priming_max))  # 关键词最相关或人物重合即算完全相关
-            p *= 1 - self.k.negative_damp * (-valence) * (1 - related)
-        return self.k.rate * p
+        """每分钟的浮现强度（0～rate），按默认的概率浮现算；供测试和可视化看。"""
+        c = Candidate(seg, strength, self.priming.get(seg.id, 0.0), 0.0)
+        return ProbabilisticSurfacing().probability(c, self.temperature, self.k)
 
     def tick(self, now_ts: float, clock: MemoryClock | None = None) -> list[Surfaced]:
         """扫描下一个分区（时钟指针走一格），返回这一格新冒头的记忆。"""
@@ -170,17 +237,21 @@ class Scanner:
         part = parts[self._cursor % len(parts)]
         self._cursor += 1
         clock = clock or clock_of(self.store)
-        new = []
+        line = self.store.load_global_knobs().forget_line
+        candidates, strengths = [], {}
         for s in part:
             minutes = (now_ts - self._last_scan.get(s.id, now_ts - 60.0)) / 60.0
             self._last_scan[s.id] = now_ts
             strength = effective_strength(self.store, s, now_ts, clock)
-            if strength < self.store.load_global_knobs().forget_line:
+            if strength < line:
                 continue  # 低于遗忘线的交给批量遗忘（D22），不再冒头
-            hit = 1 - math.exp(-self.probability(s, strength) * max(0.0, minutes))
-            if self.rng.random() < hit and all(b.segment_id != s.id for b in self.buffer):
+            strengths[s.id] = strength
+            candidates.append(Candidate(s, strength, self.priming.get(s.id, 0.0), minutes))
+        new = []
+        for s in self.policy.surface(candidates, self.temperature, self.k, self.rng):
+            if all(b.segment_id != s.id for b in self.buffer) and all(n.segment_id != s.id for n in new):
                 v = s.emotion.valence if s.emotion else 0.0
-                new.append(Surfaced(s.id, _text(s), strength, v, now_ts))
+                new.append(Surfaced(s.id, _text(s), strengths[s.id], v, now_ts))
         self.buffer = (self.buffer + new)[-self.k.buffer_size :]  # 旧的被挤掉
         return new
 
