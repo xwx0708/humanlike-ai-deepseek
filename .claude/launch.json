@@ -4,15 +4,31 @@
     {
       "name": "记忆可视化",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["01-记忆/可视化/serve.py", "8790"],
+      "runtimeArgs": [
+        "01-记忆/可视化/serve.py",
+        "8790"
+      ],
       "port": 8790,
       "autoPort": false
     },
     {
       "name": "设置页",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-c", "import sys; sys.path.insert(0, 'src'); from settings_page.server import main; main(['--port', '8791'])"],
+      "runtimeArgs": [
+        "-c",
+        "import sys; sys.path.insert(0, 'src'); from settings_page.server import main; main(['--port', '8791'])"
+      ],
       "port": 8791,
+      "autoPort": false
+    },
+    {
+      "name": "设置页-8793",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "-c",
+        "import sys; sys.path.insert(0, 'src'); from settings_page.server import main; main(['--port', '8793'])"
+      ],
+      "port": 8793,
       "autoPort": false
     }
   ]
