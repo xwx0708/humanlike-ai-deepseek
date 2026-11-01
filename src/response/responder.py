@@ -21,6 +21,12 @@ from runtime.lifecycle import FAMILIAR
 
 # 熟悉期带着全部旧聊天记录，模型会跟着自己以前的说话方式走，人设被冲淡；每轮在记录之后、这一条之前提醒一次
 PERSONA_REMINDER = "回复时保持上面人设里的身份和口气，不要被前面聊天记录里的说话方式带偏。"
+config.feature(
+    "keyword_requests",
+    "关键词识别用户要求",
+    '识别"记住、忘掉、翻档案"等要求（D29）。关闭后这些话按普通对话处理。',
+)
+config.feature("persona_reminder", "人设提醒", "每轮附加一句人设提醒，避免口吻被历史记录带偏。")
 
 
 @dataclass

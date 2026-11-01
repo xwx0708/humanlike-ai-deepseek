@@ -14,9 +14,50 @@ from pathlib import Path
 
 from runtime import config
 
-MAX_BYTES = int(config.value("attachments", "max_mb", 20.0) * 1024 * 1024)  # 单个文件上限（暂定）
-PROMPT_CHARS = config.value("attachments", "prompt_chars", 20000)  # 一个文件最多放进提示词多少字（暂定）
-MEMORY_CHARS = config.value("attachments", "memory_chars", 2000)  # 记进记忆的开头部分（暂定）
+config.section_info(
+    "attachments",
+    "文件与图片",
+    "图片交给思考模型直接识别；文件提取文字放入当轮提示词，记忆中只保留摘要（D38）。",
+)
+MAX_BYTES = int(
+    config.value(
+        "attachments",
+        "max_mb",
+        20.0,
+        "单文件上限",
+        "超过此大小的文件不读取。",
+        lo=1,
+        hi=200,
+        step=1,
+        unit="MB",
+    )
+    * 1024
+    * 1024
+)  # 单个文件上限（暂定）
+PROMPT_CHARS = config.value(
+    "attachments",
+    "prompt_chars",
+    20000,
+    "提示词字数上限",
+    "一个文件最多放进提示词的字数，超出截断。",
+    lo=1000,
+    hi=500000,
+    step=1000,
+    unit="字",
+)  # 一个文件最多放进提示词多少字（暂定）
+MEMORY_CHARS = config.value(
+    "attachments",
+    "memory_chars",
+    2000,
+    "记忆摘录长度",
+    "记入记忆的文件开头长度。",
+    lo=0,
+    hi=20000,
+    step=100,
+    unit="字",
+)  # 记进记忆的开头部分（暂定）
+config.feature("read_images", "识别图片", "把用户发来的图片交给思考模型（模型需支持图像输入）。")
+config.feature("read_files", "读取文件", "提取用户发来的文件内容（PDF、Word、Excel、PPT、文本、代码等）。")
 
 IMAGE = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
 TEXT = (

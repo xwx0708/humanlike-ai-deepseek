@@ -33,7 +33,16 @@ DEFAULT_WORDS: dict[str, tuple[str, ...]] = {
     "choice_archive": ("存进档案", "存档案", "放进档案", "放档案", "存档"),
     "choice_cancel": ("算了", "不用了", "取消", "不删了", "不忘了"),
 }
-W = {name: config.words(name, words) for name, words in DEFAULT_WORDS.items()}
+# 设置页上每张词表的名称和解释
+LABELS: dict[str, tuple[str, str]] = {
+    "remember": ("要求记住", '用户消息包含其中任一词时，所在片段标记为"用户要求记住"（常驻免竞争）。'),
+    "forget": ("要求忘掉", "触发遗忘流程：先确认是哪件事，再由用户选择彻底删除或存入档案库（D25）。"),
+    "archive": ("要求翻档案", "触发档案库检索（D26：仅在用户要求时检索）。"),
+    "choice_erase": ("选择：彻底删除", "遗忘流程中，表示选择彻底删除的说法。"),
+    "choice_archive": ("选择：存入档案", "遗忘流程中，表示选择存入档案库的说法。"),
+    "choice_cancel": ("选择：取消", "遗忘流程中，表示取消的说法。"),
+}
+W = {name: config.words(name, words, *LABELS[name]) for name, words in DEFAULT_WORDS.items()}
 
 KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     (FORGET, W["forget"]),
