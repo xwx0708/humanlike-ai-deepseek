@@ -85,8 +85,7 @@ def tick(
 
 def main(argv: list[str] | None = None) -> None:
     """暂行的独立入口：只跑记忆模块的后台任务。以后各模块的任务都登记到同一个全局调度里一起跑。"""
-    from llm import subconscious_model
-    from llm.settings import load_settings
+    from llm import load_settings, subconscious_model
     from runtime.scheduler import Scheduler
 
     ap = argparse.ArgumentParser(description="记忆模块的后台任务：每分钟 tick 一次")

@@ -5,16 +5,15 @@
 - 档案里的东西，用户要求时，AI 可以自己去搜索；找回的记忆重新回到记忆系统，相当于回想一次（D20）。
 """
 
-from dataclasses import dataclass
-
+from contracts.memory import FORGET_ARCHIVE, FORGET_ERASE, ArchiveHit
 from memory.candidates import bm25, tokenize
 from memory.clock import clock_of
 from memory.forgetting import Trace, recall
 from memory.store import MemoryStore
 from runtime import config
 
-TO_ARCHIVE = "存进档案"
-ERASE = "彻底删除"
+TO_ARCHIVE = FORGET_ARCHIVE  # 名字沿用；定义在 contracts，回应模块也要用
+ERASE = FORGET_ERASE
 
 
 def forget_thread(store: MemoryStore, tid: int, mode: str, ts: float) -> str:
@@ -26,15 +25,6 @@ def forget_thread(store: MemoryStore, tid: int, mode: str, ts: float) -> str:
         segs, turns = store.erase_thread(tid, ts, "用户要求彻底删除")  # 删除日志不写内容
         return f"已彻底删除 {segs} 个片段和 {turns} 条消息原文，不能再找回。"
     raise ValueError(f"不认识的方式：{mode}；只能是「{TO_ARCHIVE}」或「{ERASE}」")
-
-
-@dataclass
-class ArchiveHit:
-    segment_id: int
-    title: str
-    start_ts: float
-    score: float
-    excerpt: str
 
 
 def search_archive(

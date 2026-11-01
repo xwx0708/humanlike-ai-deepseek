@@ -12,9 +12,10 @@ from memory.fresh import fresh_memories
 from memory.merge import find_duplicates, merge_log, merge_recent_threads, recent_threads
 from memory.runner import tick
 from memory.scanner import Scanner, Surfaced
+from memory.service import PENDING_KEY, DefaultMemoryService
 from memory.store import MemoryStore
 from memory.subconscious import consolidate
-from response.responder import PENDING_KEY, Responder
+from response.responder import Responder
 from runtime.lifecycle import FAMILIAR, RUNNING, Lifecycle
 
 SECRET = "AURORA-7319"
@@ -48,7 +49,7 @@ def make_thread(store, text=SECRET, title="秘密项目", ts=100):
 
 
 def responder(store, phase=RUNNING):
-    return Responder(store, Scanner(store), lambda: "你叫小满。", phase=lambda: phase)
+    return Responder(DefaultMemoryService(store, Scanner(store), phase=lambda: phase), lambda: "你叫小满。")
 
 
 @pytest.mark.parametrize("phase", [FAMILIAR, RUNNING])
@@ -75,26 +76,26 @@ def test_natural_archival_does_not_hide_fresh_history(store):
 def test_forgetting_a_surfaced_memory_does_not_break_following_messages(store, mode):
     _, seg, _ = make_thread(store)
     r = responder(store)
-    r.scanner.buffer = [Surfaced(seg.id, SECRET, 1, 0, 100)]
-    r.scanner.priming[seg.id] = 0.5
+    r.memory.scanner.buffer = [Surfaced(seg.id, SECRET, 1, 0, 100)]
+    r.memory.scanner.priming[seg.id] = 0.5
     r.on_user_message("秘密项目忘掉吧", 110)
     r.on_user_message(mode, 120)
     prompt = r.on_user_message("在吗", 130)
     assert SECRET not in prompt.system
-    assert r.scanner.buffer == [] and seg.id not in r.scanner.priming
+    assert r.memory.scanner.buffer == [] and seg.id not in r.memory.scanner.priming
 
 
 def test_scanner_revalidates_archived_and_abstract_cached_text(store):
     _, seg, tid = make_thread(store)
     r = responder(store)
-    r.scanner.buffer = [Surfaced(seg.id, SECRET, 1, 0, 100)]
+    r.memory.scanner.buffer = [Surfaced(seg.id, SECRET, 1, 0, 100)]
     seg.state, seg.trace = "abstract", "项目"
     store.save_segment_state(seg)
     store.add_busy_span(100, 20000)  # 原消息不再新鲜
     assert SECRET not in r.on_user_message("在吗", 20000).system
     forget_thread(store, tid, TO_ARCHIVE, 20010)  # 模拟别的连接更新状态
-    r.scanner.tick(20020)
-    assert r.scanner.buffer == []
+    r.memory.scanner.tick(20020)
+    assert r.memory.scanner.buffer == []
 
 
 @pytest.mark.parametrize("confidence", [0.99, 0.5])
