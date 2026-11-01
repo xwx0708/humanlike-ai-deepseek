@@ -48,7 +48,7 @@ class Responder:
         images = [a.image_path for a in attachments if a.kind == "图片"]
         persona = self.persona()
         ctx = self.memory.context_for_turn(turn, ts)
-        if self.memory.phase() == FAMILIAR:
+        if ctx.phase == FAMILIAR:
             contexts = [{"role": t.role, "content": t.content} for t in ctx.history]
             if persona and contexts and config.enabled("persona_reminder"):
                 contexts.append({"role": "system", "content": PERSONA_REMINDER})
@@ -76,8 +76,7 @@ class Responder:
     # ---------- 用户对记忆的要求（D29：关键词识别） ----------
 
     def _handle_requests(self, text: str, turn_id: int, ts: float) -> list[str]:
-        pending = self.memory.pending_forget()
-        self.memory.set_pending_forget(None)  # 只等紧接着的一条：用户没选、聊别的了，就算放下了
+        pending = self.memory.take_pending_forget()  # 只等紧接着的一条：用户没选、聊别的了，就算放下了
         if pending:
             choice = requests.detect_choice(text)
             if choice == "取消":

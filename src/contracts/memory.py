@@ -135,8 +135,10 @@ FORGET_ERASE = "彻底删除"
 class MemoryContext:
     """每轮交给思考模型的记忆内容，已经排好版；回应模块拿到就能拼提示词，不必知道怎么算出来的。
 
-    熟悉期只有 history（全部旧消息，D24）；运行期只有后面几段文字（D29、D30）。"""
+    熟悉期只有 history（全部旧消息，D24）；运行期只有后面几段文字（D29、D30）。
+    phase 是生成这份内容时的生命周期阶段：回应模块按它组织提示词，整轮只判断这一次。"""
 
+    phase: str = "熟悉期"  # runtime.lifecycle 的 FAMILIAR / RUNNING
     history: list[ChatTurn] = field(default_factory=list)  # 熟悉期：全部旧消息，不含这一条
     resident: str = ""  # 常驻栏（D17）
     surfaced: str = ""  # 浮现区：自己冒头的记忆 + 被唤起的旧事实（D16、D26）
@@ -176,9 +178,6 @@ class MemoryService(Protocol):
     def scan(self, ts: float) -> None:
         """扫描器走一格（运行期每分钟一次，D26）。"""
 
-    def phase(self) -> str:
-        """runtime.lifecycle 的 FAMILIAR / RUNNING。"""
-
     def report_context_used(self, prompt_tokens: int) -> None:
         """回报思考模型这一轮实际用掉的上下文（D24）。"""
 
@@ -188,10 +187,10 @@ class MemoryService(Protocol):
     def find_forget_target(self, query: str, ts: float) -> ForgetTarget | None:
         """用户要求忘掉：按描述找最相关的事件线，找不到返回 None。"""
 
-    def pending_forget(self) -> ForgetTarget | None:
-        """上一轮问过、还等用户选方式的那件事。"""
+    def take_pending_forget(self) -> ForgetTarget | None:
+        """取走上一轮问过、还等用户选方式的那件事（取走即清空：只等紧接着的一条）。"""
 
-    def set_pending_forget(self, target: ForgetTarget | None) -> None: ...
+    def set_pending_forget(self, target: ForgetTarget) -> None: ...
 
     def forget(self, thread_id: int, mode: str, ts: float) -> str:
         """按用户选的方式（FORGET_ARCHIVE / FORGET_ERASE）忘掉，返回给用户看的一句说明。"""
@@ -199,9 +198,7 @@ class MemoryService(Protocol):
     def search_archive(self, query: str) -> list[ArchiveHit]:
         """只在用户要求时翻档案（D26）。"""
 
-    def get_meta(self, key: str, default: str | None = None) -> str | None:
-        """小块键值状态（例如平台会话标识 owner_umo）。"""
-
-    def set_meta(self, key: str, value: str) -> None: ...
+    def set_meta(self, key: str, value: str) -> None:
+        """记一小块键值状态（插件存平台会话标识 owner_umo，以后主动发消息用）。"""
 
     def close(self) -> None: ...

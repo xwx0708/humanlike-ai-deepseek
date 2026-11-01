@@ -9,6 +9,7 @@
 """
 
 import json
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -49,15 +50,17 @@ class DefaultMemoryService:
 
     def context_for_turn(self, turn: ChatTurn, ts: float) -> MemoryContext:
         self.scanner.refresh_buffer(ts)
-        if self.phase() == FAMILIAR:
+        phase = self._phase()  # 整轮只读一次：后台线程可能正好在这一轮里把阶段切到运行期
+        if phase == FAMILIAR:
             history = [t for t in self.store.all_turns(include_forgotten=False) if t.id != turn.id]
-            return MemoryContext(history=history)
+            return MemoryContext(phase, history=history)
         # 运行期：话题和专注程度交给扫描器，下一次扫描按新的话题充电、按专注程度定温度（D26）
         self.scanner.set_topic(turn.content)
         self.scanner.set_focus(focus_of(self.store, turn.conversation_id))
         fresh = [m for m in fresh_memories(self.store, ts) if m.turn.id != turn.id]  # 这一条本身单独给
         surfaced = drop_fresh(self.store, self.scanner.buffer, fresh)
         return MemoryContext(
+            phase,
             resident=resident_block(self.store),
             surfaced=_surfaced_block(surfaced, take_evocations(self.store)),
             fresh=fresh_block(fresh),
@@ -66,9 +69,6 @@ class DefaultMemoryService:
 
     def scan(self, ts: float) -> None:
         self.scanner.tick(ts)
-
-    def phase(self) -> str:
-        return self._phase()
 
     def report_context_used(self, prompt_tokens: int) -> None:
         report_context_used(self.store, prompt_tokens)
@@ -84,29 +84,24 @@ class DefaultMemoryService:
                 return ForgetTarget(tids[0], self.store.thread_card(tids[0])["title"])
         return None
 
-    def pending_forget(self) -> ForgetTarget | None:
+    def take_pending_forget(self) -> ForgetTarget | None:
         raw = self.store.get_meta(PENDING_KEY)
+        self.store.set_meta(PENDING_KEY, "")  # 先清空再解析：记录坏了也只影响这一条，不会每条都报错
         if not raw:
             return None
         data = json.loads(raw)
         return ForgetTarget(data["thread"], data["title"])
 
-    def set_pending_forget(self, target: ForgetTarget | None) -> None:
-        value = (
-            json.dumps({"thread": target.thread_id, "title": target.title}, ensure_ascii=False)
-            if target
-            else ""
+    def set_pending_forget(self, target: ForgetTarget) -> None:
+        self.store.set_meta(
+            PENDING_KEY, json.dumps({"thread": target.thread_id, "title": target.title}, ensure_ascii=False)
         )
-        self.store.set_meta(PENDING_KEY, value)
 
     def forget(self, thread_id: int, mode: str, ts: float) -> str:
         return forget_thread(self.store, thread_id, mode, ts)
 
     def search_archive(self, query: str) -> list[ArchiveHit]:
         return search_archive(self.store, query)
-
-    def get_meta(self, key: str, default: str | None = None) -> str | None:
-        return self.store.get_meta(key, default)
 
     def set_meta(self, key: str, value: str) -> None:
         self.store.set_meta(key, value)
@@ -151,24 +146,23 @@ class RecentWindowMemory:
 
     def __init__(self, window: int = 50):
         self.window = window
-        self.turns: list[ChatTurn] = []
+        self.turns: deque[ChatTurn] = deque(maxlen=window + 1)  # 窗口 + 这一条本身，更早的直接丢
+        self.count = 0
         self.meta: dict[str, str] = {}
         self._pending: ForgetTarget | None = None
 
     def ingest(self, role: str, content: str, ts: float) -> ChatTurn:
-        turn = ChatTurn(len(self.turns) + 1, 1, role, content, ts)
+        self.count += 1
+        turn = ChatTurn(self.count, 1, role, content, ts)
         self.turns.append(turn)
         return turn
 
     def context_for_turn(self, turn: ChatTurn, ts: float) -> MemoryContext:
         history = [t for t in self.turns if t.id != turn.id]
-        return MemoryContext(history=history[-self.window :])
+        return MemoryContext(FAMILIAR, history=history[-self.window :])  # 永远是"上下文就是上下文"
 
     def scan(self, ts: float) -> None:
         pass
-
-    def phase(self) -> str:
-        return FAMILIAR  # 永远是"上下文就是上下文"
 
     def report_context_used(self, prompt_tokens: int) -> None:
         pass
@@ -179,10 +173,11 @@ class RecentWindowMemory:
     def find_forget_target(self, query: str, ts: float) -> ForgetTarget | None:
         return None
 
-    def pending_forget(self) -> ForgetTarget | None:
-        return self._pending
+    def take_pending_forget(self) -> ForgetTarget | None:
+        pending, self._pending = self._pending, None
+        return pending
 
-    def set_pending_forget(self, target: ForgetTarget | None) -> None:
+    def set_pending_forget(self, target: ForgetTarget) -> None:
         self._pending = target
 
     def forget(self, thread_id: int, mode: str, ts: float) -> str:
@@ -190,9 +185,6 @@ class RecentWindowMemory:
 
     def search_archive(self, query: str) -> list[ArchiveHit]:
         return []
-
-    def get_meta(self, key: str, default: str | None = None) -> str | None:
-        return self.meta.get(key, default)
 
     def set_meta(self, key: str, value: str) -> None:
         self.meta[key] = value
