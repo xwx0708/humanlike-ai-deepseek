@@ -17,20 +17,6 @@ SHARED = {"contracts", "runtime"}  # 不算模块的共用层
 # (导入方文件，相对 src，/ 分隔) -> 它越界导入的模块子文件
 WHITELIST: dict[str, set[str]] = {
     "response/astrbot_plugin/main.py": {"action.qq_self"},
-    "settings_page/schema.py": {
-        "llm.settings",
-        "memory.boundaries",
-        "memory.candidates",
-        "memory.clock",
-        "memory.forgetting",
-        "memory.fresh",
-        "memory.profile",
-        "memory.resident",
-        "memory.runner",
-        "memory.scanner",
-        "memory.sweep",
-        "response.requests",
-    },
 }
 
 

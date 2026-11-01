@@ -13,15 +13,16 @@ from pathlib import Path
 from typing import Any
 
 from runtime import config
-from settings_page.schema import FEATURES, SECTIONS, WORD_LISTS, schema
+from settings_page.schema import schema
 
 PAGE = Path(__file__).with_name("page.html")
 
 
 def clean(raw: dict[str, Any]) -> dict[str, Any]:
     """按说明表校验用户提交的设置：类型转换、范围裁剪、去掉不认识的项、只保留和默认值不同的。"""
+    spec = schema()
     out: dict[str, Any] = {}
-    for sec in SECTIONS:
+    for sec in spec["sections"]:
         got = raw.get(sec["id"]) or {}
         kept = {}
         for f in sec["fields"]:
@@ -52,12 +53,12 @@ def clean(raw: dict[str, Any]) -> dict[str, Any]:
         if kept:
             out[sec["id"]] = kept
     feats = raw.get("features") or {}
-    off = {f["key"]: False for f in FEATURES if feats.get(f["key"]) is False}
+    off = {f["key"]: False for f in spec["features"] if feats.get(f["key"]) is False}
     if off:
         out["features"] = off
     words = raw.get("keywords") or {}
     kw = {}
-    for w in WORD_LISTS:
+    for w in spec["word_lists"]:
         got = words.get(w["key"]) or {}
         add = [
             s.strip()

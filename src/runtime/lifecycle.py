@@ -17,7 +17,21 @@ from runtime import config
 
 FAMILIAR = "熟悉期"
 RUNNING = "运行期"
-START_RATIO = config.value("lifecycle", "start_ratio", 0.7)  # 上下文用到多少比例时启动（用户定：约 70%）
+config.section_info(
+    "lifecycle",
+    "启动机制",
+    "熟悉期 → 启动 → 运行期。熟悉期按普通方式带全部聊天记录；用量达到启动比例时，一次性整理全部对话、建立概率海。",
+)
+START_RATIO = config.value(
+    "lifecycle",
+    "start_ratio",
+    0.7,
+    "启动比例",
+    "上下文用量占上限的比例达到此值时启动记忆系统（D24）。启动只发生一次。",
+    lo=0.1,
+    hi=0.95,
+    step=0.05,
+)  # 上下文用到多少比例时启动（用户定：约 70%）
 
 DEFAULT_PATH = config.data_dir() / "lifecycle.json"
 
