@@ -2,3 +2,5 @@
 
 外部工具（MCP）直接用 AstrBot 自带的（D29）；这里只放需要本项目自己把关的动作。
 """
+
+from action import qq_self  # noqa: F401  加载时登记参数与功能开关（D42）

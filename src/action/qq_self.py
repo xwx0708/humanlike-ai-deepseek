@@ -34,25 +34,64 @@ class Limit:
 
 
 # 暂定，偏严（用户要求"严格限制频率"）；以后测试时再调
-def _limit(key: str, times: int, days: float) -> Limit:
+config.section_info(
+    "action", "自主行为频率", "小d 在严格限频下自主执行的 QQ 操作（D35）。上限 = 在给定天数内最多执行的次数。"
+)
+
+
+def _limit(key: str, label: str, times: int, days: float) -> Limit:
     return Limit(
-        config.value("action", f"{key}_times", times), config.value("action", f"{key}_days", days) * DAY
+        config.value(
+            "action",
+            f"{key}_times",
+            times,
+            f"{label}：次数",
+            f"{label}在窗口期内最多执行的次数。",
+            lo=0,
+            hi=50,
+        ),
+        config.value(
+            "action",
+            f"{key}_days",
+            days,
+            f"{label}：窗口期",
+            f"{label}的频率窗口长度。",
+            lo=0.1,
+            hi=90,
+            step=0.5,
+            unit="天",
+        )
+        * DAY,
     )
 
 
 LIMITS = {
-    AVATAR: _limit("avatar", 1, 7),
-    NICKNAME: _limit("nickname", 1, 7),
-    SIGNATURE: _limit("signature", 1, 3),
-    POST: _limit("post", 1, 1),
-    DELETE: _limit("delete", 2, 1),
+    AVATAR: _limit("avatar", AVATAR, 1, 7.0),
+    NICKNAME: _limit("nickname", NICKNAME, 1, 7.0),
+    SIGNATURE: _limit("signature", SIGNATURE, 1, 3.0),
+    POST: _limit("post", POST, 1, 1.0),
+    DELETE: _limit("delete", DELETE, 2, 1.0),
 }
 MAX_CHARS = {NICKNAME: 20, SIGNATURE: 60, POST: 500}
 MAX_IMAGES = 4  # 一条说说最多配几张图（暂定）
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 VISIBLE_TO_FRIENDS = config.value(
-    "action", "post_visibility", 4
+    "action",
+    "post_visibility",
+    4,
+    "说说可见范围",
+    "自主发布的 QQ 空间说说的可见范围。",
+    kind="select",
+    options=[1, 4, 64],
+    option_labels=["所有人", "好友", "仅自己"],
 )  # 说说默认好友可见（暂定）；1 所有人、4 好友、64 仅自己
+# 功能开关：插件按这些名字决定要不要把工具交给思考模型（含联网搜索，D36）
+config.feature("web_search", "联网搜索", "使用 AstrBot 自带的网页搜索（D36），来源和密钥在 AstrBot 中配置。")
+config.feature("qq_set_avatar", "自主换头像", "允许小d 自主更换 QQ 头像（图片来自数据文件夹的 images/）。")
+config.feature("qq_set_nickname", "自主改昵称", "允许小d 自主修改 QQ 昵称。")
+config.feature("qq_set_signature", "自主改签名", "允许小d 自主修改 QQ 个性签名。")
+config.feature("qq_post_moment", "自主发说说", "允许小d 自主发布 QQ 空间说说。")
+config.feature("qq_delete_moment", "自主删说说", "允许小d 删除自己发布的说说。")
 
 
 class Refused(Exception):
