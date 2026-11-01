@@ -3,4 +3,7 @@
 外部工具（MCP）直接用 AstrBot 自带的（D29）；这里只放需要本项目自己把关的动作。
 """
 
-from action import qq_self  # noqa: F401  加载时登记参数与功能开关（D42）
+from action import qq_self  # 加载时登记参数与功能开关（D42）
+from action.qq_self import QQSelf, Refused  # 组装处（插件）从这里取
+
+__all__ = ["QQSelf", "Refused", "qq_self"]

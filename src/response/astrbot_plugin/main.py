@@ -37,7 +37,7 @@ class HumanlikePlugin(Star):
         if str(root / "src") not in sys.path:
             sys.path.insert(0, str(root / "src"))
 
-        from action.qq_self import QQSelf
+        from action import QQSelf
         from llm import load_settings, subconscious_model
         from memory import DefaultMemoryService, background_job
         from response.background import make_scheduler
@@ -164,7 +164,7 @@ class HumanlikePlugin(Star):
     # ---------- 小d 自己的事（D35：严格限制频率，可以自己决定） ----------
 
     async def _do(self, event: AstrMessageEvent, build) -> str:
-        from action.qq_self import Refused
+        from action import Refused
 
         bot = getattr(event, "bot", None)
         if bot is None or not hasattr(bot, "call_action"):
