@@ -1,10 +1,10 @@
-"""小d 在 QQ 上自己的事：换头像、改昵称、改签名、发说说、删说说（D35）。
+"""AI 在 QQ 上自己的事：换头像、改昵称、改签名、发说说、删说说（D35）。
 
 - 用户定："在严格限制频率的情况下可以自我决定。" 所以这些动作由思考模型自己决定做不做，不先问用户，
   但每种动作都有频率上限（暂定，见 LIMITS），超过就拒绝，并告诉模型下次最早什么时候能做。
 - 这里只负责把关（频率、长度、图片来源）和生成要交给 NapCat 的接口名与参数；真正调用由 AstrBot 插件做，
   调用成功后再 record()。这样这一层不依赖 AstrBot，可以单独测试。
-- 图片只能用 data/images/ 里的（暂定）：小d 自己画不了图，用户把候选图片放进这个文件夹。
+- 图片只能用 data/images/ 里的（暂定）：AI 自己画不了图，用户把候选图片放进这个文件夹。
   以 base64 交给 NapCat，因为 NapCat 在另一个容器里，读不到本项目的文件。
 - 删说说只能删自己用这个工具发的。
 """
@@ -35,7 +35,9 @@ class Limit:
 
 # 暂定，偏严（用户要求"严格限制频率"）；以后测试时再调
 config.section_info(
-    "action", "自主行为频率", "小d 在严格限频下自主执行的 QQ 操作（D35）。上限 = 在给定天数内最多执行的次数。"
+    "action",
+    "自主行为频率",
+    "{name} 在严格限频下自主执行的 QQ 操作（D35）：每种动作在一个窗口期（天数可改）内最多做几次。",
 )
 
 
@@ -87,11 +89,11 @@ VISIBLE_TO_FRIENDS = config.value(
 )  # 说说默认好友可见（暂定）；1 所有人、4 好友、64 仅自己
 # 功能开关：插件按这些名字决定要不要把工具交给思考模型（含联网搜索，D36）
 config.feature("web_search", "联网搜索", "使用 AstrBot 自带的网页搜索（D36），来源和密钥在 AstrBot 中配置。")
-config.feature("qq_set_avatar", "自主换头像", "允许小d 自主更换 QQ 头像（图片来自数据文件夹的 images/）。")
-config.feature("qq_set_nickname", "自主改昵称", "允许小d 自主修改 QQ 昵称。")
-config.feature("qq_set_signature", "自主改签名", "允许小d 自主修改 QQ 个性签名。")
-config.feature("qq_post_moment", "自主发说说", "允许小d 自主发布 QQ 空间说说。")
-config.feature("qq_delete_moment", "自主删说说", "允许小d 删除自己发布的说说。")
+config.feature("qq_set_avatar", "自主换头像", "允许{name} 自主更换 QQ 头像（图片来自数据文件夹的 images/）。")
+config.feature("qq_set_nickname", "自主改昵称", "允许{name} 自主修改 QQ 昵称。")
+config.feature("qq_set_signature", "自主改签名", "允许{name} 自主修改 QQ 个性签名。")
+config.feature("qq_post_moment", "自主发说说", "允许{name} 自主发布 QQ 空间说说。")
+config.feature("qq_delete_moment", "自主删说说", "允许{name} 删除自己发布的说说。")
 
 
 class Refused(Exception):
