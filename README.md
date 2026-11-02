@@ -57,11 +57,7 @@ docker compose up -d            # 下载并启动 NapCat、AstrBot 的官方镜�
 2. 打开 `http://127.0.0.1:6099/webui`（NapCat），用 QQ 小号扫码登录。
 3. 在 `data/persona.md` 写人设，改了立即生效。
 
-   不想从头写的话，可以去这些开源人设库挑一个，复制进 `data/persona.md` 再按需修改：
-   - [hitikem/qqbot-personas](https://github.com/hitikem/qqbot-personas)：专为 QQ 机器人 + DeepSeek 写的中文人设，14 套，含 DeepSeek 蓝鲸拟人"蓝鲸娘"（MIT）
-   - [mrqy1/astrbot-persona](https://github.com/mrqy1/astrbot-persona)：基于心理学框架的人设模板，带可叠加的性格模块（MIT）
-
-   如果觉得好用，记得去给原作者点个 ⭐ Star。
+   不想从头写的话，设置页「人设 → 人设库…」里列了可用的来源（都是给 AI 聊天扮演用的）：中文有 [AstrBot 人格市场](https://astrbot.app/market)、[PlexPt/awesome-chatgpt-prompts-zh](https://github.com/PlexPt/awesome-chatgpt-prompts-zh)、[momozi1996/awesome-ai-persona-skills](https://github.com/momozi1996/awesome-ai-persona-skills)、[mrqy1/astrbot-persona](https://github.com/mrqy1/astrbot-persona)、[hitikem/qqbot-personas](https://github.com/hitikem/qqbot-personas)；英文有 [Chub.ai](https://www.characterhub.org)、[f/awesome-chatgpt-prompts](https://github.com/f/awesome-chatgpt-prompts)、[teknium1/character-cards](https://github.com/teknium1/character-cards)、[aicharactercards.com](https://aicharactercards.com)。挑一个复制进来再改；喜欢的话，建议给原作者点点 ⭐。
 
 4. 打开 `http://127.0.0.1:8791`（设置页）调整参数：遗忘曲线、扫描与浮现、启动比例、模型、数据文件夹等。每项旁的 ⓘ 悬停可看解释；也能关闭功能、自定义触发说法、换掉遗忘曲线和浮现策略（或把自己写的放进 `data/plugins/`，见 `src/contracts/plugins.py`）。改完重启 AstrBot 生效：`docker compose restart astrbot`。
 

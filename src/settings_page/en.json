@@ -73,11 +73,16 @@
     "persona_save_failed": "Saving the persona failed: ",
     "persona_save": "Save persona",
     "persona_from_file": "Load from a text file…",
-    "persona_lib": "Open-source persona library ↗",
+    "persona_lib": "Persona libraries…",
     "persona_star": "If you like it, consider giving the author a ⭐",
     "persona_unreadable": "Could not read the persona file",
     "persona_also_saved": " The persona was saved too and is in effect now.",
-    "persona_also_failed": " Saving the persona failed: "
+    "persona_also_failed": " Saving the persona failed: ",
+    "libs_title": "Persona / character-card sources",
+    "libs_note": "All are other people's work; use under their licences. SillyTavern character cards are PNG or JSON — copy the text of description / personality in here. Personas from the AstrBot market can be used as they are.",
+    "libs_zh": "Chinese",
+    "libs_en": "English",
+    "libs_close": "Close"
   },
   "sections": {
     "general": {

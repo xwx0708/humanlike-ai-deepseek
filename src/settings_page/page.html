@@ -109,6 +109,10 @@
   .picker .dirs { display: flex; flex-direction: column; max-height: 48vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
   .picker .dir { padding: 6px 10px; cursor: pointer; }
   .picker .dir:hover { background: var(--bg); }
+  .picker.libs a.dir { display: block; text-decoration: none; color: var(--ink); border-radius: 6px; }
+  .picker.libs a.dir b { color: var(--changed); }
+  .picker.libs .group-title { margin: 8px 0 2px; }
+  .picker.libs .note { margin: 0; }
   .switch { position: relative; width: 36px; height: 20px; flex: none; }
   .switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
   .switch span { position: absolute; inset: 0; border-radius: 10px; background: var(--off); transition: background .15s; pointer-events: none; }
@@ -186,7 +190,8 @@ const ZH = {
   y_label: '强度 S', x_label: '记忆时间（天）', threshold_label: '遗忘阈值 {v}',
   persona: '人设', persona_help: '它是谁、怎么说话、有什么习惯——由你用文字描述，一般几千字以内。回应和主动发消息都用（D29）。存在数据文件夹的 persona.md，保存后立即生效，不用重启。名字请和"它的名字"保持一致。',
   persona_chars: '{n} 字', persona_loaded: '已读入「{f}」，点"保存人设"写入。', persona_saved: '人设已保存到 {p}，立即生效。', persona_save_failed: '保存人设失败：',
-  persona_save: '保存人设', persona_from_file: '从文本文件读入…', persona_lib: '开源人设库 ↗', persona_star: '喜欢的话，建议给原作者点点 ⭐', persona_unreadable: '读不到人设文件',
+  persona_save: '保存人设', persona_from_file: '从文本文件读入…', persona_lib: '人设库…', persona_star: '喜欢的话，建议给原作者点点 ⭐', persona_unreadable: '读不到人设文件',
+  libs_title: '人设 / 角色卡来源', libs_note: '都是别人的作品，按各自的许可使用。SillyTavern 格式的角色卡是 PNG 或 JSON，把里面 description / personality 的文字复制进来就行；AstrBot 人格市场的可以直接用。', libs_zh: '中文', libs_en: '英文', libs_close: '关闭',
   persona_also_saved: ' 人设也已保存，立即生效。', persona_also_failed: ' 人设保存失败：',
   astrbot_none: '未检测到 AstrBot 配置（数据文件夹/astrbot/cmd_config.json）', astrbot_follow: '以此为准',
 };
@@ -523,6 +528,32 @@ function render() {
   }
 }
 
+// 人设 / 角色卡的来源（2026-11-02 核对过：都是给 AI 聊天扮演用的，不是 agent 工作流；star 数为当时）
+const PERSONA_LIBS = [
+  { lang: 'zh', name: 'AstrBot 人格市场', url: 'https://astrbot.app/market', note: { zh: 'AstrBot 官方，人格文件拿来就能用', en: 'Official AstrBot persona market; ready to use' } },
+  { lang: 'zh', name: 'PlexPt/awesome-chatgpt-prompts-zh', url: 'https://github.com/PlexPt/awesome-chatgpt-prompts-zh', note: { zh: '64k ⭐，约 150 条"充当 XX"的角色扮演提示词', en: '64k ⭐, ~150 Chinese role-play prompts' } },
+  { lang: 'zh', name: 'momozi1996/awesome-ai-persona-skills', url: 'https://github.com/momozi1996/awesome-ai-persona-skills', note: { zh: '1k ⭐，名人 / 作家 / 职业等 100+ 人格，Markdown', en: '1k ⭐, 100+ personas (celebrities, writers, professions), Markdown' } },
+  { lang: 'zh', name: 'mrqy1/astrbot-persona', url: 'https://github.com/mrqy1/astrbot-persona', note: { zh: '按心理学框架写人设的模板，带可叠加的性格模块', en: 'Psychology-framed persona template with stackable traits' } },
+  { lang: 'zh', name: 'hitikem/qqbot-personas', url: 'https://github.com/hitikem/qqbot-personas', note: { zh: 'QQ 机器人 + DeepSeek 专用的 14 套人设，含蓝鲸娘（小众）', en: '14 personas for QQ bots on DeepSeek, incl. Blue Whale (small)' } },
+  { lang: 'en', name: 'Chub.ai / CharacterHub', url: 'https://www.characterhub.org', note: { zh: '最大的角色卡社区，SillyTavern 格式；内容良莠不齐、含成人向，自行甄别', en: 'Largest character-card community, SillyTavern format; mixed quality, adult content present' } },
+  { lang: 'en', name: 'f/awesome-chatgpt-prompts', url: 'https://github.com/f/awesome-chatgpt-prompts', note: { zh: '100k+ ⭐，"Act as…" 角色提示词', en: '100k+ ⭐, "Act as…" role prompts' } },
+  { lang: 'en', name: 'teknium1/character-cards', url: 'https://github.com/teknium1/character-cards', note: { zh: '角色卡合集，JSON', en: 'A collection of character cards, JSON' } },
+  { lang: 'en', name: 'aicharactercards.com', url: 'https://aicharactercards.com', note: { zh: '角色卡站，SillyTavern 格式', en: 'Character-card site, SillyTavern format' } },
+];
+function personaLibs() {
+  const box = h('div', { class: 'picker libs' });
+  const close = () => box.remove();
+  box.append(h('h3', {}, t('libs_title')), h('p', { class: 'note' }, t('libs_note')));
+  for (const L of ['zh', 'en']) {
+    box.append(h('div', { class: 'group-title' }, t('libs_' + L)));
+    for (const lib of PERSONA_LIBS.filter(x => x.lang === L)) {
+      box.append(h('a', { class: 'dir', href: lib.url, target: '_blank', rel: 'noopener' }, h('b', {}, lib.name + ' ↗'), h('span', { class: 'unit' }, ' ' + (lang === 'en' ? lib.note.en : lib.note.zh))));
+    }
+  }
+  box.append(h('div', { class: 'bar' }, h('button', { type: 'button', onclick: close }, t('libs_close'))));
+  document.body.append(box);
+}
+
 // 人设：直接在这里写，或选一个文本文件读进来；存到数据文件夹的 persona.md，改了立即生效（D29）
 let PERSONA = { path: '', text: '', loaded: false, draft: null };  // text：文件里的；draft：正在编辑的
 const personaDirty = () => PERSONA.loaded && PERSONA.draft != null && PERSONA.draft !== PERSONA.text;
@@ -545,7 +576,7 @@ function personaSection() {
     catch (e) { notice(t('persona_save_failed') + e.message); }
   } }, t('persona_save'));
   sec.append(ta, h('div', { class: 'bar' }, save, h('button', { type: 'button', onclick: () => file.click() }, t('persona_from_file')), file,
-    h('a', { class: 'ext', href: 'https://github.com/hitikem/qqbot-personas', target: '_blank', rel: 'noopener' }, t('persona_lib')), h('span', { class: 'unit' }, t('persona_star')), count));
+    h('a', { class: 'ext', href: '#', onclick: e => { e.preventDefault(); personaLibs(); } }, t('persona_lib')), h('span', { class: 'unit' }, t('persona_star')), count));
   const fill = () => { ta.value = PERSONA.draft ?? PERSONA.text; upd(); };
   if (PERSONA.loaded) fill();
   else fetch('/api/persona').then(r => r.json()).then(d => { PERSONA = { ...d, loaded: true }; fill(); }).catch(() => { count.textContent = t('persona_unreadable'); });
