@@ -51,6 +51,8 @@
                       background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
   .persona .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
   .persona .bar .unit { margin-left: auto; }
+  .persona .bar a.ext { color: var(--changed); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+  .persona .bar a.ext:hover { color: var(--ink); }
   .warn { grid-column: 1 / -1; margin: -4px 0 4px; padding: 8px 10px; border-radius: 6px; font-size: 12.5px; line-height: 1.5;
           background: rgba(229, 102, 91, .12); color: #e5665b; border: 1px solid rgba(229, 102, 91, .35); }
   .pair input[type=number] { width: 72px; }
@@ -518,7 +520,7 @@ function personaSection() {
     const d = await r.json(); PERSONA.path = d.path; PERSONA.text = ta.value; upd(); notice(`人设已保存到 <code>${d.path}</code>，立即生效。`);
   } }, '保存人设');
   sec.append(ta, h('div', { class: 'bar' }, save, h('button', { type: 'button', onclick: () => file.click() }, '从文本文件读入…'), file,
-    h('a', { href: 'https://github.com/hitikem/qqbot-personas', target: '_blank', rel: 'noopener' }, '开源人设库（记得给原作者点 Star）'), count));
+    h('a', { class: 'ext', href: 'https://github.com/hitikem/qqbot-personas', target: '_blank', rel: 'noopener' }, '开源人设库 ↗'), h('span', { class: 'unit' }, '喜欢的话，建议给原作者点点 ⭐'), count));
   const fill = () => { ta.value = PERSONA.text; upd(); };
   if (PERSONA.loaded) fill();
   else fetch('/api/persona').then(r => r.json()).then(d => { PERSONA = { ...d, loaded: true }; fill(); }).catch(() => { count.textContent = '读不到人设文件'; });
