@@ -8,14 +8,15 @@ from response.background import make_scheduler
 from runtime.lifecycle import RUNNING, Lifecycle
 
 
-def test_memory_job_starts_lifecycle_when_context_is_70_percent_full(tmp_path):
+def test_memory_job_starts_lifecycle_at_start_tokens(tmp_path, monkeypatch):
+    monkeypatch.setattr("runtime.lifecycle.START_TOKENS", 700)  # D43：按 token 数启动
     db, life = tmp_path / "memory.db", tmp_path / "lifecycle.json"
     store = MemoryStore(db)
     c = store.new_conversation(0)
     store.add_turn(c.id, "user", "你好", 0)
     job = background_job(FakeModel([]), context_limit=1000, db_path=db, lifecycle_path=life)
     assert job(60).started is None
-    report_context_used(store, 700)  # 回应模块回报：上下文用到 70%
+    report_context_used(store, 700)  # 回应模块回报：上下文用到了启动 token 数
     store.close()
     seg = {
         "segments": [
