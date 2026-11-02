@@ -100,10 +100,12 @@
   .q:hover::after, .q:focus::after { opacity: 1; }
 
   .ctl > button { flex: none; white-space: nowrap; }
+  .backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .45); z-index: 49; }
   .picker { position: fixed; top: 10vh; left: 50%; transform: translateX(-50%); width: min(560px, 92vw); max-height: 80vh; overflow: auto;
-            background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; z-index: 50;
+            background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; z-index: 50;
             box-shadow: 0 12px 40px rgba(0,0,0,.35); display: flex; flex-direction: column; gap: 10px; }
-  .picker h3 { margin: 0; font-size: 15px; }
+  .picker h3 { margin: 0; font-size: 15px; flex: 1; }
+  .picker .x { margin-left: auto; width: 28px; height: 28px; padding: 0; font-size: 18px; line-height: 1; border-radius: 6px; }
   .picker .bar { display: flex; gap: 8px; align-items: center; }
   .picker code { font-size: 12.5px; word-break: break-all; }
   .picker .dirs { display: flex; flex-direction: column; max-height: 48vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
@@ -285,11 +287,13 @@ function inputRow(secId, f) {
 
 // 文件夹选择器：浏览器拿不到本机目录的真实路径，所以由服务端列目录、这里只做浏览（/api/folders）
 function pickFolder(start, done) {
+  const back = h('div', { class: 'backdrop' });
   const box = h('div', { class: 'picker' });
-  const title = h('h3', {}, t('pick_title'));
+  const title = h('div', { class: 'bar' }, h('h3', {}, t('pick_title')), h('button', { class: 'x', type: 'button', 'aria-label': t('pick_cancel'), onclick: () => close() }, '×'));
   const cur = h('code');
   const list = h('div', { class: 'dirs' });
-  const close = () => box.remove();
+  const close = () => { box.remove(); back.remove(); };
+  back.addEventListener('click', close);
   let here = '';
   const go = async path => {
     const r = await fetch('/api/folders?path=' + encodeURIComponent(path));
@@ -303,7 +307,7 @@ function pickFolder(start, done) {
   const ok = h('button', { class: 'primary', type: 'button', onclick: () => { if (here) done(here); close(); } }, t('pick_here'));
   const cancel = h('button', { type: 'button', onclick: close }, t('pick_cancel'));
   box.append(title, h('div', { class: 'bar' }, up, cur), list, h('div', { class: 'bar' }, ok, cancel));
-  document.body.append(box);
+  document.body.append(back, box);
   go(start);
 }
 
@@ -541,9 +545,12 @@ const PERSONA_LIBS = [
   { lang: 'en', name: 'aicharactercards.com', url: 'https://aicharactercards.com', note: { zh: '角色卡站，SillyTavern 格式', en: 'Character-card site, SillyTavern format' } },
 ];
 function personaLibs() {
+  const back = h('div', { class: 'backdrop' });
   const box = h('div', { class: 'picker libs' });
-  const close = () => box.remove();
-  box.append(h('h3', {}, t('libs_title')), h('p', { class: 'note' }, t('libs_note')));
+  const close = () => { box.remove(); back.remove(); };
+  back.addEventListener('click', close);
+  box.append(h('div', { class: 'bar' }, h('h3', {}, t('libs_title')), h('button', { class: 'x', type: 'button', 'aria-label': t('libs_close'), onclick: close }, '×')),
+    h('p', { class: 'note' }, t('libs_note')));
   for (const L of ['zh', 'en']) {
     box.append(h('div', { class: 'group-title' }, t('libs_' + L)));
     for (const lib of PERSONA_LIBS.filter(x => x.lang === L)) {
@@ -551,7 +558,7 @@ function personaLibs() {
     }
   }
   box.append(h('div', { class: 'bar' }, h('button', { type: 'button', onclick: close }, t('libs_close'))));
-  document.body.append(box);
+  document.body.append(back, box);
 }
 
 // 人设：直接在这里写，或选一个文本文件读进来；存到数据文件夹的 persona.md，改了立即生效（D29）
