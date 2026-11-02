@@ -30,7 +30,8 @@
   #notice.show { display: block; margin-top: 14px; }
   #notice code { font-size: 12.5px; }
   .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; padding: 0 28px; max-width: 1180px; flex: 1; min-height: 0; }
-  main { overflow-y: auto; min-height: 0; padding: 18px 4px 80px 0; }
+  main { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 18px 4px 80px 0; }  /* 只上下滚；内容不许横向溢出 */
+  section, .with-preview > div, .row, .ctl { min-width: 0; }
   nav { display: flex; flex-direction: column; overflow-y: auto; min-height: 0; padding: 18px 4px 40px 0; scrollbar-width: none; }  /* 左右两块各自滚：鼠标在哪块就滚哪块；左栏不显示滚动条 */
   nav::-webkit-scrollbar { display: none; }
   nav a { color: var(--ink-2); text-decoration: none; padding: 4px 10px; border-left: 2px solid transparent; font-size: 13.5px; }
