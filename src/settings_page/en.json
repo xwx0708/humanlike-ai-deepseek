@@ -33,7 +33,51 @@
     "pick_title": "Choose a folder",
     "pick_up": "Up",
     "pick_here": "Use this folder",
-    "pick_cancel": "Cancel"
+    "pick_cancel": "Cancel",
+    "drives": "(drives)",
+    "at_most": "At most",
+    "times_every": "times every",
+    "days_in": "days",
+    "pair_default": "{n} times / {d} days",
+    "other": "Other",
+    "chart_title": "Forgetting curve preview",
+    "chart_note": "Three lines, three kinds of memory: the more emotional and important, the slower it fades. Change the parameters on the left, or the three pairs of numbers below, and watch the curves move.",
+    "chart_help": "The x-axis is memory time (on the memory clock: fast while chatting, almost frozen when idle); the y-axis is memory strength. The three lines are three imagined memories; the more emotional and important, the slower they fade: half-life = base half-life × emotion factor^emotion × importance factor^importance (× edge bonus). Once a curve drops below the dashed line (forgetting threshold) it leaves scanning and waits for batch forgetting. Change a parameter on the left and the chart updates at once.",
+    "lv1": "A passing remark",
+    "lv2": "Something that matters a bit",
+    "lv3": "Emotional and important",
+    "emotion": "Emotion",
+    "importance": "Importance",
+    "emotion_help": "How worked up this made it: 0 = as usual, 1 = most intense. Called relative arousal a in the formula.",
+    "importance_help": "How much this matters to the person: 0 = trivial, 1 = life-changing. Called importance i in the formula.",
+    "never_forget": "never forgotten",
+    "forget_after": "forgotten after ~{d} days",
+    "half_life": " (half-life {h} days)",
+    "level_default": "default emotion {a} / importance {i}",
+    "edge_label": "Count as the first/last segment of a conversation (edge bonus)",
+    "axis": "x-axis range",
+    "axis_auto": "x-axis: auto",
+    "axis_days": "{n} days",
+    "axis_1y": "1 year",
+    "axis_3y": "3 years",
+    "example_reset": "↺ Reset examples",
+    "example_reset_title": "Reset the three emotion/importance pairs, the edge bonus and the x-axis (parameters on the left are untouched)",
+    "y_label": "strength S",
+    "x_label": "memory time (days)",
+    "threshold_label": "forgetting threshold {v}",
+    "persona": "Persona",
+    "persona_help": "Who it is, how it talks, its habits — written by you, usually a few thousand characters at most. Used for replies and for messages it sends on its own (D29). Stored as persona.md in the data folder; takes effect as soon as it is saved, no restart. Keep the name consistent with “Its name”.",
+    "persona_chars": "{n} chars",
+    "persona_loaded": "Loaded “{f}”; click “Save persona” to write it.",
+    "persona_saved": "Persona saved to {p}; in effect now.",
+    "persona_save_failed": "Saving the persona failed: ",
+    "persona_save": "Save persona",
+    "persona_from_file": "Load from a text file…",
+    "persona_lib": "Open-source persona library ↗",
+    "persona_star": "If you like it, consider giving the author a ⭐",
+    "persona_unreadable": "Could not read the persona file",
+    "persona_also_saved": " The persona was saved too and is in effect now.",
+    "persona_also_failed": " Saving the persona failed: "
   },
   "sections": {
     "general": {
@@ -204,7 +248,10 @@
         "Exponential",
         "Power law",
         "No decay"
-      ]
+      ],
+      "warnings": {
+        "不遗忘": "No-decay is for debugging only: memories only accumulate, the surfacing buffer and resident bar get ever more crowded, each turn's context grows longer and costlier, and it errors once the thinking model's limit is exceeded. For normal use choose exponential or power-law decay."
+      }
     },
     "clock.speed": {
       "label": "Chat speed",
@@ -557,5 +604,12 @@
       "label": "Choice: cancel",
       "help": "Phrasings that cancel the forgetting flow."
     }
+  },
+  "groups": {
+    "基础": "Basics",
+    "记忆": "Memory",
+    "整理": "Consolidation",
+    "对话与行动": "Chat and actions",
+    "其他": "Other"
   }
 }

@@ -16,7 +16,8 @@
             --accent: #7fb4dc; --accent-soft: #1d2b36; --changed: #e0a56a; --off: #5c666f; --tip-bg: #e5eaee; --tip-ink: #111518; }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.6; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.6; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  header { flex: none; }
   header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line);
            display: flex; align-items: center; gap: 16px; padding: 12px 28px; }
   header h1 { font-size: 18px; margin: 0; font-weight: 700; }
@@ -28,14 +29,16 @@
   #notice { margin: 0 28px; padding: 10px 14px; border-radius: 6px; background: var(--accent-soft); color: var(--ink); display: none; }
   #notice.show { display: block; margin-top: 14px; }
   #notice code { font-size: 12.5px; }
-  .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; padding: 18px 28px 80px; max-width: 1180px; }
-  nav { position: sticky; top: 70px; align-self: start; display: flex; flex-direction: column; max-height: calc(100vh - 86px); overflow-y: auto; padding-right: 4px; }  /* 比窗口高时自己滚，整体钉住不跟页面走 */
+  .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; padding: 0 28px; max-width: 1180px; flex: 1; min-height: 0; }
+  main { overflow-y: auto; min-height: 0; padding: 18px 4px 80px 0; }
+  nav { display: flex; flex-direction: column; overflow-y: auto; min-height: 0; padding: 18px 4px 40px 0; scrollbar-width: none; }  /* 左右两块各自滚：鼠标在哪块就滚哪块；左栏不显示滚动条 */
+  nav::-webkit-scrollbar { display: none; }
   nav a { color: var(--ink-2); text-decoration: none; padding: 4px 10px; border-left: 2px solid transparent; font-size: 13.5px; }
   nav a:hover { color: var(--ink); border-left-color: var(--line); }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px 22px 8px; margin-bottom: 18px; scroll-margin-top: 80px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px 22px 8px; margin-bottom: 18px; scroll-margin-top: 12px; }
   .preview { margin: 4px 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
   .with-preview { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 20px; align-items: start; }
-  .with-preview .preview { position: sticky; top: 72px; margin: 10px 0; }
+  .with-preview .preview { position: sticky; top: 4px; margin: 10px 0; }
   .with-preview .row { grid-template-columns: minmax(120px, 160px) minmax(0, 1fr) auto; }
   .preview .note { color: var(--muted); font-size: 12.5px; margin: 0 0 6px; }
   .preview .legend { flex-direction: column; gap: 4px; }
@@ -124,7 +127,7 @@
   .add input { width: 180px; }
   .wordrow { grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); align-items: start; }
   @media (max-width: 760px) {
-    .layout { grid-template-columns: 1fr; padding: 14px 16px 60px; }
+    .layout { grid-template-columns: 1fr; padding: 0 16px; }
     nav { display: none; }
     .row { grid-template-columns: 1fr; gap: 6px; }
     header { padding: 10px 16px; flex-wrap: wrap; }
@@ -171,10 +174,25 @@ const ZH = {
   confirm_restore: '把所有设置恢复为默认值？保存后才会写入文件。', restored: '已恢复为默认值，点"保存"写入文件。',
   restart_hint: '重启后生效：Docker 部署运行 docker compose restart astrbot。', lang_button: 'Eng',
   astrbot_label: 'AstrBot 当前思考模型', astrbot_help: '对话用的思考模型以 AstrBot 网页里选的为准；这里显示 AstrBot 配置里启用的模型。不用 AstrBot（命令行平台）时在 .env 里配。',
-  pick: '选择…', pick_title: '选择文件夹', pick_up: '上一级', pick_here: '就用这个文件夹', pick_cancel: '取消',
+  pick: '选择…', pick_title: '选择文件夹', pick_up: '上一级', pick_here: '就用这个文件夹', pick_cancel: '取消', drives: '（盘）',
+  at_most: '最多', times_every: '次，每', days_in: '天内', pair_default: '{n} 次 / {d} 天', other: '其他',
+  chart_title: '遗忘曲线预览', chart_note: '三条线是三种记忆：越动情、越重要，忘得越慢。改左边的参数，或改下面三组数字，看曲线怎么变。',
+  chart_help: '横轴是记忆时间（按记忆时钟计：对话中流速加快，不聊天时几乎停住），纵轴是记忆强度。三条线是三段假想的记忆，越动情、越重要的事忘得越慢：半衰期 = 基础半衰期 × 情绪倍数^情绪 × 重要性倍数^重要（× 首尾加成）。曲线跌破虚线（遗忘阈值）就退出扫描、等待批量遗忘。左边的参数一改，图立刻跟着变。',
+  lv1: '随口一提的小事', lv2: '有点在意的事', lv3: '动情又重要的事', emotion: '情绪', importance: '重要',
+  emotion_help: '这段话让它有多激动，0 = 和平时一样，1 = 最激动。公式里叫相对唤醒度 a。', importance_help: '这件事对对方有多重要，0 = 无关紧要，1 = 人生大事。公式里叫重要性 i。',
+  never_forget: '永不遗忘', forget_after: '约 {d} 天后忘掉', half_life: '（半衰期 {h} 天）', level_default: '默认 情绪 {a} / 重要 {i}',
+  edge_label: '算作一场对话的首尾片段（首尾加成）', axis: '横轴范围', axis_auto: '横轴：自动', axis_days: '{n} 天', axis_1y: '1 年', axis_3y: '3 年',
+  example_reset: '↺ 示例恢复默认', example_reset_title: '把三组情绪 / 重要、首尾加成和横轴恢复默认（不动左边的参数）',
+  y_label: '强度 S', x_label: '记忆时间（天）', threshold_label: '遗忘阈值 {v}',
+  persona: '人设', persona_help: '它是谁、怎么说话、有什么习惯——由你用文字描述，一般几千字以内。回应和主动发消息都用（D29）。存在数据文件夹的 persona.md，保存后立即生效，不用重启。名字请和"它的名字"保持一致。',
+  persona_chars: '{n} 字', persona_loaded: '已读入「{f}」，点"保存人设"写入。', persona_saved: '人设已保存到 {p}，立即生效。', persona_save_failed: '保存人设失败：',
+  persona_save: '保存人设', persona_from_file: '从文本文件读入…', persona_lib: '开源人设库 ↗', persona_star: '喜欢的话，建议给原作者点点 ⭐', persona_unreadable: '读不到人设文件',
+  persona_also_saved: ' 人设也已保存，立即生效。', persona_also_failed: ' 人设保存失败：',
   astrbot_none: '未检测到 AstrBot 配置（数据文件夹/astrbot/cmd_config.json）', astrbot_follow: '以此为准',
 };
 const t = key => (lang === 'en' && EN.ui?.[key]) || ZH[key];
+const tt = (key, vars) => Object.entries(vars).reduce((acc, [k, v]) => acc.replace('{' + k + '}', v), t(key));  // 带占位符的文案
+const tgroup = title => (lang === 'en' && EN.groups?.[title]) || title;
 // 分区、参数、功能、词表的译文：英文缺条目时回落到登记的中文
 // 文案里的 {name} 换成用户给它起的名字（设置里的"它的名字"）
 const aiName = () => (state.general?.ai_name || SCHEMA.sections[0].fields.find(x => x.key === 'ai_name')?.default || 'AI');
@@ -183,7 +201,7 @@ const tsec = sec => { const e = (lang === 'en' && EN.sections?.[sec.id]) || sec;
 const tf = (secId, f) => {
   const e = lang === 'en' ? EN.fields?.[`${secId}.${f.key}`] : null;
   const out = !e ? { ...f } : { ...f, label: e.label || f.label, help: e.help || f.help, option_labels: e.options || f.option_labels,
-           unit: (EN.units?.[f.unit]) || f.unit };
+           unit: (EN.units?.[f.unit]) || f.unit, warnings: e.warnings ? { ...f.warnings, ...e.warnings } : f.warnings };
   out.label = nm(out.label); out.help = nm(out.help);
   return out;
 };
@@ -271,7 +289,7 @@ function pickFolder(start, done) {
   const go = async path => {
     const r = await fetch('/api/folders?path=' + encodeURIComponent(path));
     const d = await r.json();
-    here = d.path; cur.textContent = d.path || '（盘）';
+    here = d.path; cur.textContent = d.path || t('drives');
     list.replaceChildren(...d.dirs.map(name => h('div', { class: 'dir', role: 'button', tabindex: '0',
       onclick: () => go(d.path ? (d.path.endsWith('\\') || d.path.endsWith('/') ? d.path + name : d.path + '\\' + name) : name) }, '📁 ' + name)));
     up.disabled = d.parent == null; up.onclick = () => go(d.parent);
@@ -314,8 +332,8 @@ function actionRows(raw) {
     };
     const name = ft.label.split(/[：:]/)[0];
     row.append(h('label', {}, name, q(`${ft.help} ${fd.help}`)),
-      h('div', { class: 'ctl' }, h('span', { class: 'pair' }, '最多', mk(ft), '次，每', mk(fd), '天内')),
-      h('span', { class: 'dflt' }, `${t('default')} ${fmt(ft.default)} 次 / ${fmt(fd.default)} 天`));
+      h('div', { class: 'ctl' }, h('span', { class: 'pair' }, t('at_most'), mk(ft), t('times_every'), mk(fd), t('days_in'))),
+      h('span', { class: 'dflt' }, `${t('default')} ${tt('pair_default', { n: fmt(ft.default), d: fmt(fd.default) })}`));
     row.classList.toggle('changed', state[raw.id]?.[f.key] != null || state[raw.id]?.[days.key] != null);
     rows.push(row);
   }
@@ -353,23 +371,24 @@ function forgettingChart(box) {
   const S = (H, t) => model === '幂律衰减' ? 1 / (1 + t / H) : model === '不遗忘' ? 1 : Math.pow(0.5, t / H);
   const line = g('forget_line');
   const colors = ['#8aa4b8', '#e0a458', '#e5665b'];
-  const names = ['随口一提的小事', '有点在意的事', '动情又重要的事'];
+  const names = [t('lv1'), t('lv2'), t('lv3')];
   const Hs = P.levels.map(l => halfLife(l.a, l.i));
   // 横轴：自动时看到中间那条跌破遗忘线为止（最强的那条会出框，图例里写着它多久跌破）；也可手选范围
-  const forgetDays = H => model === '幂律衰减' ? H * (1 / line - 1) : model === '不遗忘' ? 365 : H * Math.log2(1 / line);
-  const maxDays = P.span || Math.min(3650, Math.max(14, forgetDays(Hs[1]) * 1.25));
+  const forgetDaysAt = (H, l) => model === '幂律衰减' ? H * (1 / l - 1) : model === '不遗忘' ? 365 : H * Math.log2(1 / l);
+  const forgetDays = H => forgetDaysAt(H, line);
+  const maxDays = P.span || Math.min(3650, Math.max(14, forgetDaysAt(Hs[1], 0.1) * 1.25));  // 范围按固定 0.1 算：改阈值只动虚线，不动横轴
   const W = 440, Ht = 230, L = 40, R = 12, T = 14, B = 32;
   const x = d => L + (d / maxDays) * (W - L - R), y = s => T + (1 - s) * (Ht - T - B);
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${Ht}`); svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', '遗忘曲线预览');
+  svg.setAttribute('aria-label', t('chart_title'));
   const el = (tag, attrs, text) => { const e = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v); if (text != null) e.textContent = text; svg.append(e); return e; };
   for (const s of [0.25, 0.5, 0.75, 1]) { el('line', { class: 'grid', x1: L, x2: W - R, y1: y(s), y2: y(s) }); el('text', { x: L - 6, y: y(s) + 4, 'text-anchor': 'end' }, s.toFixed(2)); }
   const step = [1, 2, 5, 7, 14, 30, 60, 90, 180, 365, 730, 1825].find(s => maxDays / s <= 8) || 1825;
   for (let d = 0; d <= maxDays; d += step) { el('line', { class: 'grid', x1: x(d), x2: x(d), y1: T, y2: Ht - B }); el('text', { x: x(d), y: Ht - B + 14, 'text-anchor': 'middle' }, String(d)); }
   el('line', { class: 'axis', x1: L, x2: W - R, y1: Ht - B, y2: Ht - B }); el('line', { class: 'axis', x1: L, x2: L, y1: T, y2: Ht - B });
-  el('text', { x: W - R, y: Ht - 4, 'text-anchor': 'end' }, '记忆时间（天）'); el('text', { x: L + 4, y: T + 10 }, '强度 S');
-  el('line', { class: 'line', x1: L, x2: W - R, y1: y(line), y2: y(line) }); el('text', { x: W - R - 4, y: y(line) - 4, 'text-anchor': 'end' }, `遗忘阈值 ${line}`);
+  el('text', { x: W - R, y: Ht - 4, 'text-anchor': 'end' }, t('x_label')); el('text', { x: L + 4, y: T + 10 }, t('y_label'));
+  el('line', { class: 'line', x1: L, x2: W - R, y1: y(line), y2: y(line) }); el('text', { x: W - R - 4, y: y(line) - 4, 'text-anchor': 'end' }, tt('threshold_label', { v: line }));
   Hs.forEach((H, k) => {
     const pts = []; const n = 160;
     for (let j = 0; j <= n; j++) { const d = (j / n) * maxDays; pts.push(`${x(d).toFixed(1)},${y(Math.max(0, Math.min(1, S(H, d)))).toFixed(1)}`); }
@@ -383,21 +402,21 @@ function forgettingChart(box) {
     const mk = (key, label) => { const inp = h('input', { type: 'number', min: 0, max: 1, step: 0.1, value: l[key], 'aria-label': `${names[k]} ${label}` });
       inp.addEventListener('input', () => { const v = Math.min(1, Math.max(0, +inp.value || 0)); l[key] = v; refreshPreview('forgetting'); }); return inp; };
     legend.append(h('span', {}, h('i', { style: `background:${colors[k]}` }), h('b', { style: 'font-weight:600' }, names[k]),
-      '情绪', mk('a', '情绪'), q('这段话让它有多激动，0 = 和平时一样，1 = 最激动。公式里叫相对唤醒度 a。'),
-      '重要', mk('i', '重要性'), q('这件事对对方有多重要，0 = 无关紧要，1 = 人生大事。公式里叫重要性 i。'),
-      h('span', { class: 'unit' }, `${model === '不遗忘' ? '永不遗忘' : `约 ${fmt(+fd.toFixed(0))} 天后忘掉`}（半衰期 ${fmt(+H.toFixed(1))} 天）　默认 情绪 ${D.levels[k].a} / 重要 ${D.levels[k].i}`)));
+      t('emotion'), mk('a', t('emotion')), q(t('emotion_help')),
+      t('importance'), mk('i', t('importance')), q(t('importance_help')),
+      h('span', { class: 'unit' }, `${model === '不遗忘' ? t('never_forget') : tt('forget_after', { d: fmt(+fd.toFixed(0)) })}${tt('half_life', { h: fmt(+H.toFixed(1)) })}　${tt('level_default', { a: D.levels[k].a, i: D.levels[k].i })}`)));
   });
   const edge = h('input', { type: 'checkbox' }); edge.checked = P.edge;
   edge.addEventListener('change', () => { P.edge = edge.checked; refreshPreview('forgetting'); });
-  legend.append(h('label', { style: 'display:inline-flex;gap:6px;align-items:center' }, edge, '算作一场对话的首尾片段（首尾加成）'));
-  const span = h('select', { 'aria-label': '横轴范围' }, [[0, '横轴：自动'], [30, '30 天'], [90, '90 天'], [365, '1 年'], [1095, '3 年']].map(([v, l]) => h('option', { value: v }, l)));
+  legend.append(h('label', { style: 'display:inline-flex;gap:6px;align-items:center' }, edge, t('edge_label')));
+  const span = h('select', { 'aria-label': t('axis') }, [[0, t('axis_auto')], [30, tt('axis_days', { n: 30 })], [90, tt('axis_days', { n: 90 })], [365, t('axis_1y')], [1095, t('axis_3y')]].map(([v, l]) => h('option', { value: v }, l)));
   span.value = String(P.span); span.addEventListener('change', () => { P.span = +span.value; refreshPreview('forgetting'); });
-  const resetAll = h('button', { type: 'button', title: '把三组情绪 / 重要、首尾加成和横轴恢复默认（不动左边的参数）',
-    onclick: () => { PREVIEW_STATE.forgetting = PREVIEW_DEFAULTS.forgetting(); refreshPreview('forgetting'); } }, '↺ 示例恢复默认');
+  const resetAll = h('button', { type: 'button', title: t('example_reset_title'),
+    onclick: () => { PREVIEW_STATE.forgetting = PREVIEW_DEFAULTS.forgetting(); refreshPreview('forgetting'); } }, t('example_reset'));
   legend.append(h('span', { style: 'border-top:none' }, span, resetAll));
   box.append(
-    h('div', { class: 'head' }, '遗忘曲线预览', q('横轴是记忆时间（按记忆时钟计：对话中流速加快，不聊天时几乎停住），纵轴是记忆强度。三条线是三段假想的记忆，越动情、越重要的事忘得越慢：半衰期 = 基础半衰期 × 情绪倍数^情绪 × 重要性倍数^重要（× 首尾加成）。曲线跌破虚线（遗忘阈值）就退出扫描、等待批量遗忘。左边的参数一改，图立刻跟着变。')),
-    h('p', { class: 'note' }, '三条线是三种记忆：越动情、越重要，忘得越慢。改左边的参数，或改下面三组数字，看曲线怎么变。'),
+    h('div', { class: 'head' }, t('chart_title'), q(t('chart_help'))),
+    h('p', { class: 'note' }, t('chart_note')),
     svg, legend,
   );
 }
@@ -464,7 +483,7 @@ function visible(secId, f) {
     return values.map(String).includes(String(v));
   });
 }
-function rerender() { const y = window.scrollY; render(); window.scrollTo(0, y); }
+function rerender() { const m = $('#main'); const y = m.scrollTop; render(); m.scrollTop = y; }
 
 function render() {
   const main = $('#main'), nav = $('#nav');
@@ -472,6 +491,7 @@ function render() {
   document.documentElement.lang = lang === 'en' ? 'en' : 'zh-CN';
   document.title = t('title') + ' · ' + (lang === 'en' ? 'Humanlike AI' : '类人 AI');
   $('header h1').textContent = t('title');
+  $('nav').setAttribute('aria-label', lang === 'en' ? 'Sections' : '设置分区');
   $('#resetAll').textContent = t('restore_all'); $('#save').textContent = t('save'); $('#lang').textContent = t('lang_button');
   if (PATH) $('#path').textContent = t('path') + PATH;
   // 每个分区怎么画：注册表里的分区按参数画；persona / features / keywords 是页面自己的
@@ -485,7 +505,7 @@ function render() {
     else el.append(...rows);
     return [el, sec.title];
   };
-  build.persona = () => [personaSection(), '人设'];
+  build.persona = () => [personaSection(), t('persona')];
   build.features = () => [h('section', { id: 'features' }, h('h2', {}, t('features')), h('p', {}, t('features_help')),
     h('div', { class: 'two-col' }, SCHEMA.features.map(f => featureRow(tfeat(f))))), t('features')];
   build.keywords = () => { const words = h('section', { id: 'keywords' }, h('h2', {}, t('keywords')), h('p', {}, t('keywords_help')));
@@ -494,11 +514,11 @@ function render() {
   const groups = (SCHEMA.groups || []).map(g => ({ ...g }));
   const placed = new Set(groups.flatMap(g => g.ids));
   const rest = Object.keys(build).filter(id => !placed.has(id));
-  if (rest.length) groups.push({ title: '其他', ids: rest });
+  if (rest.length) groups.push({ title: t('other'), ids: rest });
   for (const g of groups) {
     const ids = g.ids.filter(id => build[id]);
     if (!ids.length) continue;
-    main.append(h('h2', { class: 'group-title' }, g.title)); nav.append(h('div', { class: 'group' }, g.title));
+    main.append(h('h2', { class: 'group-title' }, tgroup(g.title))); nav.append(h('div', { class: 'group' }, tgroup(g.title)));
     for (const id of ids) { const [el, title] = build[id](); main.append(el); nav.append(h('a', { href: '#' + id }, title)); }
   }
 }
@@ -512,24 +532,23 @@ async function savePersona(opts = {}) {
   const d = await r.json(); PERSONA.path = d.path; PERSONA.text = PERSONA.draft ?? PERSONA.text; return d;
 }
 function personaSection() {
-  const sec = h('section', { id: 'persona', class: 'persona' }, h('h2', {}, '人设'),
-    h('p', {}, '它是谁、怎么说话、有什么习惯——由你用文字描述，一般几千字以内。回应和主动发消息都用（D29）。存在数据文件夹的 persona.md，保存后立即生效，不用重启。名字请和"它的名字"保持一致。'));
-  const ta = h('textarea', { placeholder: '例如：你叫大肥鱼，是一条……', 'aria-label': '人设' });
+  const sec = h('section', { id: 'persona', class: 'persona' }, h('h2', {}, t('persona')), h('p', {}, t('persona_help')));
+  const ta = h('textarea', { 'aria-label': t('persona') });  // 不放默认文字，保持空白（用户定）
   const count = h('span', { class: 'unit' });
   const file = h('input', { type: 'file', accept: '.md,.txt,text/plain,text/markdown', style: 'display:none' });
-  const upd = () => { count.textContent = `${ta.value.length} 字${PERSONA.path ? ' · ' + PERSONA.path : ''}`; };
+  const upd = () => { count.textContent = `${tt('persona_chars', { n: ta.value.length })}${PERSONA.path ? ' · ' + PERSONA.path : ''}`; };
   ta.addEventListener('input', () => { PERSONA.draft = ta.value; upd(); });
-  file.addEventListener('change', async () => { const f = file.files[0]; if (!f) return; ta.value = await f.text(); PERSONA.draft = ta.value; upd(); notice(`已读入「${f.name}」，点"保存人设"写入。`); });
+  file.addEventListener('change', async () => { const f = file.files[0]; if (!f) return; ta.value = await f.text(); PERSONA.draft = ta.value; upd(); notice(tt('persona_loaded', { f: f.name })); });
   const save = h('button', { class: 'primary', type: 'button', onclick: async () => {
     PERSONA.draft = ta.value;
-    try { const d = await savePersona(); upd(); notice(`人设已保存到 <code>${d.path}</code>，立即生效。`); }
-    catch (e) { notice('保存人设失败：' + e.message); }
-  } }, '保存人设');
-  sec.append(ta, h('div', { class: 'bar' }, save, h('button', { type: 'button', onclick: () => file.click() }, '从文本文件读入…'), file,
-    h('a', { class: 'ext', href: 'https://github.com/hitikem/qqbot-personas', target: '_blank', rel: 'noopener' }, '开源人设库 ↗'), h('span', { class: 'unit' }, '喜欢的话，建议给原作者点点 ⭐'), count));
+    try { const d = await savePersona(); upd(); notice(tt('persona_saved', { p: `<code>${d.path}</code>` })); }
+    catch (e) { notice(t('persona_save_failed') + e.message); }
+  } }, t('persona_save'));
+  sec.append(ta, h('div', { class: 'bar' }, save, h('button', { type: 'button', onclick: () => file.click() }, t('persona_from_file')), file,
+    h('a', { class: 'ext', href: 'https://github.com/hitikem/qqbot-personas', target: '_blank', rel: 'noopener' }, t('persona_lib')), h('span', { class: 'unit' }, t('persona_star')), count));
   const fill = () => { ta.value = PERSONA.draft ?? PERSONA.text; upd(); };
   if (PERSONA.loaded) fill();
-  else fetch('/api/persona').then(r => r.json()).then(d => { PERSONA = { ...d, loaded: true }; fill(); }).catch(() => { count.textContent = '读不到人设文件'; });
+  else fetch('/api/persona').then(r => r.json()).then(d => { PERSONA = { ...d, loaded: true }; fill(); }).catch(() => { count.textContent = t('persona_unreadable'); });
   return sec;
 }
 
@@ -558,7 +577,7 @@ $('#save').addEventListener('click', async () => {
   const data = await r.json();
   state = data.saved; SAVED = JSON.stringify(state);
   let extra = '';
-  if (personaDirty()) { try { await savePersona(); extra = ' 人设也已保存，立即生效。'; } catch (e) { extra = ' 人设保存失败：' + e.message; } }
+  if (personaDirty()) { try { await savePersona(); extra = t('persona_also_saved'); } catch (e) { extra = t('persona_also_failed') + e.message; } }
   render();
   notice(`${t('saved')}<code>${data.path}</code>. ${t('restart_hint').replace('docker compose restart astrbot', '<code>docker compose restart astrbot</code>')}${extra}`);
 });
