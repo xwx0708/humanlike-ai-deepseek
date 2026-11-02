@@ -155,6 +155,10 @@ DECAY = plugins.choose(
         "也可以把自己写的曲线放进数据文件夹的 plugins/（见 contracts/plugins.py）。",
         kind="select",
         options=plugins.names("decay", DECAY_MODELS),
+        warnings={
+            NoDecay.name: "不遗忘只用于调试：记忆只增不减，浮现区和常驻栏越来越挤，每轮上下文越来越长、越来越贵，"
+            "超过思考模型上限后会出错。正常使用请选指数或幂律衰减。"
+        },
     ),
     DECAY_MODELS,
 )

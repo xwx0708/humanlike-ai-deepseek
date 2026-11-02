@@ -69,14 +69,16 @@ def test_split_turns_respects_budget_and_prefers_boundaries():
 # ---------- 熟悉期 → 启动 ----------
 
 
-def test_familiar_phase_starts_at_70_percent_of_context(store):
+def test_familiar_phase_starts_at_token_count(store):
+    """D43：按绝对 token 数启动（默认 6 万），不看上限的比例。"""
     c = store.new_conversation(0)
     for i in range(3):
         store.add_turn(c.id, "user", "字" * 96, i * 60)  # 每条 100
     life = Lifecycle(path=None)
-    assert life.phase == FAMILIAR and context_used(store) == 300
-    assert not life.should_start(context_used(store), 500)  # 300 < 350
-    assert life.should_start(context_used(store), 400)  # 300 ≥ 280
+    assert life.phase == FAMILIAR and context_used(store) == 300 and life.start_tokens == 60_000
+    assert not life.should_start(context_used(store), 400)  # 没到 6 万；上限（400）不再参与判断
+    assert not life.should_start(59_999, 1_000_000) and life.should_start(60_000, 1_000_000)
+    assert Lifecycle(path=None, start_tokens=300).should_start(context_used(store))
 
 
 def test_start_up_consolidates_everything_and_fills_strength(store, tmp_path):
@@ -85,9 +87,9 @@ def test_start_up_consolidates_everything_and_fills_strength(store, tmp_path):
     c2 = store.new_conversation(10 * DAY)
     store.add_turn(c2.id, "user", "字" * 96, 10 * DAY)
     fake = FakeModel([seg_reply(1, "第一场"), NEW, {"summary": "聊了第一场"}, seg_reply(1, "第二场"), NEW])
-    life = Lifecycle(path=tmp_path / "lifecycle.json")
+    life = Lifecycle(path=tmp_path / "lifecycle.json", start_tokens=200)
     register(life, store, fake)
-    assert life.maybe_start(10 * DAY, context_used(store), 10_000) is None  # 还没到 70%
+    assert life.maybe_start(10 * DAY, 100, 10_000) is None  # 还没到启动 token 数
     out = life.maybe_start(10 * DAY + 60, context_used(store), 250)
     assert len(out["记忆"].reports) == 2 and life.phase == RUNNING
     segs = store.segments()
