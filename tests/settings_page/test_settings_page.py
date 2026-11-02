@@ -18,7 +18,9 @@ WORD_LISTS = {"remember", "forget", "archive", "choice_erase", "choice_archive",
 def test_every_module_registered_its_settings():
     """config.load_modules() 要能走到每个登记参数的文件：分区、功能开关、词表一个不少。"""
     s = schema()
-    assert [x["id"] for x in s["sections"]][: len(ORDER)] == list(ORDER)
+    registered = [i for i in ORDER if i in {x["id"] for x in s["sections"]}]
+    assert [x["id"] for x in s["sections"]][: len(registered)] == registered  # 按分组顺序排
+    assert [g["title"] for g in s["groups"]] == ["基础", "记忆", "整理", "对话与行动"]
     assert {f["key"] for f in s["features"]} == FEATURES
     assert {w["key"] for w in s["word_lists"]} == WORD_LISTS
 

@@ -14,7 +14,7 @@ from llm.deepseek import DeepSeekModel
 from llm.fake import FakeModel
 from llm.ollama import OllamaModel
 from llm.openai_compat import OpenAICompatModel
-from llm.settings import PROVIDERS, Settings, load_settings
+from llm.settings import PRESET_BASE_URLS, PROVIDERS, Settings, load_settings
 
 
 def make_model(provider: str, model: str, settings: Settings | None = None) -> ChatModel:
@@ -34,6 +34,14 @@ def make_model(provider: str, model: str, settings: Settings | None = None) -> C
             model=model,
             base_url=s.deepseek_base_url,
             thinking=s.deepseek_thinking,
+        )
+    if provider in PRESET_BASE_URLS:  # 常见几家的 OpenAI 兼容接口，地址预设好（D43）
+        if not s.openai_compat_api_key and not PRESET_BASE_URLS[provider].startswith("http://127."):
+            raise RuntimeError(
+                f"{provider} 需要密钥：请把 OPENAI_COMPAT_API_KEY 设为环境变量，或写进项目根目录的 .env"
+            )
+        return OpenAICompatModel(
+            api_key=s.openai_compat_api_key or "none", model=model, base_url=PRESET_BASE_URLS[provider]
         )
     if provider == "ollama":
         return OllamaModel(

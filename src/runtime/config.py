@@ -129,6 +129,13 @@ REGISTRY.section(
 )
 REGISTRY.add_value(
     "general",
+    "ai_name",
+    "大肥鱼",
+    "它的名字",
+    "你给它起的名字，请和人设里写的名字保持一致。设置页的说明会用这个称呼；聊天里它叫什么由人设决定。",
+)
+REGISTRY.add_value(
+    "general",
     "data_dir",
     "data",
     "数据文件夹",

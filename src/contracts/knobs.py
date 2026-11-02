@@ -25,6 +25,8 @@ def knob(
     kind: str | None = None,
     options: list | None = None,
     option_labels: list[str] | None = None,
+    show_when: dict[str, list] | None = None,
+    warnings: dict[str, str] | None = None,
     secret: bool = False,
 ) -> Any:
     """参数类里一个字段：默认值照旧写在这里，附上设置页要的说明。kind 默认按默认值的类型推断。"""
@@ -38,6 +40,8 @@ def knob(
         "kind": kind,
         "options": options,
         "option_labels": option_labels,
+        "show_when": show_when,
+        "warnings": warnings,
         SECRET: secret,
     }
     return field(default=default, metadata={k: v for k, v in meta.items() if v is not None})
@@ -57,6 +61,8 @@ class KnobSpec:
     unit: str = ""
     options: list | None = None
     option_labels: list[str] | None = None
+    show_when: dict[str, list] | None = None  # {同分区的参数: [取值...]}：任一条满足才显示（给设置页）
+    warnings: dict[str, str] | None = None  # {取值: 提示}：选到这个值时设置页在下方提示风险
     restart: bool = True  # 改了要重启才生效（目前全部如此）
 
     def as_dict(self) -> dict[str, Any]:
@@ -75,6 +81,10 @@ class KnobSpec:
             d["options"] = self.options
             if self.option_labels is not None:
                 d["option_labels"] = self.option_labels
+        if self.show_when:
+            d["show_when"] = self.show_when
+        if self.warnings:
+            d["warnings"] = self.warnings
         return d
 
 
@@ -171,6 +181,8 @@ class KnobRegistry:
                     m.get("unit", ""),
                     m.get("options"),
                     m.get("option_labels"),
+                    m.get("show_when"),
+                    m.get("warnings"),
                 )
             )
 

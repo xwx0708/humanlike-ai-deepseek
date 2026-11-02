@@ -9,29 +9,21 @@ from typing import Any
 from contracts.knobs import REGISTRY
 from runtime import config
 
-# 分区的显示顺序；没列出的分区按登记顺序排在后面
-ORDER = (
-    "general",
-    "models",
-    "lifecycle",
-    "forgetting",
-    "clock",
-    "scanner",
-    "fresh",
-    "resident",
-    "sweep",
-    "archive",
-    "runner",
-    "merge",
-    "candidates",
-    "boundaries",
-    "profile",
-    "attachments",
-    "action",
+# 分区归成几个大项（用户 2026-11-02：栏目太多，合并成大项看着舒服）；没列出的分区按登记顺序排在最后一组
+GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("基础", ("general", "persona", "models", "lifecycle")),
+    ("记忆", ("forgetting", "clock", "scanner", "fresh", "resident", "sweep", "archive")),
+    ("整理", ("runner", "merge", "candidates", "boundaries", "profile")),
+    ("对话与行动", ("attachments", "action", "features", "keywords")),
 )
+ORDER = tuple(
+    i for _, ids in GROUPS for i in ids
+)  # persona / features / keywords 是页面自己画的，不在注册表里
 
 config.load_modules()  # 让各模块登记自己的参数
 
 
 def schema() -> dict[str, Any]:
-    return REGISTRY.schema(ORDER)
+    s = REGISTRY.schema(ORDER)
+    s["groups"] = [{"title": title, "ids": list(ids)} for title, ids in GROUPS]
+    return s

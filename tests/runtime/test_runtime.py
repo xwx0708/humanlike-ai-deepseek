@@ -21,11 +21,11 @@ def test_scheduler_runs_jobs_on_time_and_isolates_errors():
 
 
 def test_lifecycle_runs_every_module_hook_once(tmp_path):
-    life = Lifecycle(path=tmp_path / "lifecycle.json")
+    life = Lifecycle(path=tmp_path / "lifecycle.json", start_tokens=70)
     order = []
     life.on_start("记忆", lambda now: order.append("记忆") or "概率海")
     life.on_start("情绪", lambda now: order.append("情绪") or "基线")
-    assert life.phase == FAMILIAR and life.maybe_start(1, 69, 100) is None  # 69% 还不启动
+    assert life.phase == FAMILIAR and life.maybe_start(1, 69, 100) is None  # 69 < 70 还不启动
     assert life.maybe_start(2, 70, 100) == {"记忆": "概率海", "情绪": "基线"}
     assert order == ["记忆", "情绪"] and life.phase == RUNNING and life.started_ts == 2
     assert life.maybe_start(3, 100, 100) is None

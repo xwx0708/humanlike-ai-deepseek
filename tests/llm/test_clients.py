@@ -172,7 +172,7 @@ def test_roles_can_use_any_provider(tmp_path, monkeypatch):
     assert isinstance(t, OllamaModel) and t.name == "qwen-big"
     assert isinstance(sub, DeepSeekModel) and sub.name == "deepseek-v4-pro"
     with pytest.raises(ValueError, match="不认识"):
-        make_model("openai", "x")
+        make_model("nobody", "x")  # openai 现在是预设之一（D43）
 
 
 def test_deepseek_without_key_is_clear(monkeypatch, tmp_path):
@@ -219,3 +219,15 @@ def test_openai_compat_from_settings(monkeypatch):
     monkeypatch.setenv("OPENAI_COMPAT_BASE_URL", "")
     with pytest.raises(RuntimeError, match="OPENAI_COMPAT_BASE_URL"):
         thinking_model()
+
+
+def test_preset_providers_use_openai_compat_with_preset_url():
+    from llm import make_model
+    from llm.settings import PRESET_BASE_URLS, PROVIDERS, Settings
+
+    assert "qwen" in PROVIDERS and "anthropic" in PROVIDERS
+    m = make_model("qwen", "qwen-plus", Settings(openai_compat_api_key="k"))
+    assert isinstance(m, OpenAICompatModel) and m._url.startswith(PRESET_BASE_URLS["qwen"])
+    with pytest.raises(RuntimeError, match="OPENAI_COMPAT_API_KEY"):
+        make_model("openai", "gpt-5", Settings())
+    assert isinstance(make_model("lmstudio", "local", Settings()), OpenAICompatModel)  # 本地的不用密钥

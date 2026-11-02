@@ -22,17 +22,20 @@ def settings(tmp_path, monkeypatch):
 
 def test_no_file_means_defaults(settings):
     assert config.knobs(ScannerKnobs(), "scanner") == ScannerKnobs()
-    assert config.value("lifecycle", "start_ratio", 0.7) == 0.7
+    assert config.value("lifecycle", "start_tokens", 60000) == 60000
     assert config.enabled("web_search") is True
 
 
 def test_overrides_are_cast_and_unknown_keys_ignored(settings):
     settings(
-        {"scanner": {"buffer_size": "6", "threshold": 0.5, "nonsense": 1}, "lifecycle": {"start_ratio": 0.8}}
+        {
+            "scanner": {"buffer_size": "6", "threshold": 0.5, "nonsense": 1},
+            "lifecycle": {"start_tokens": 80000},
+        }
     )
     k = config.knobs(ScannerKnobs(), "scanner")
     assert (k.buffer_size, k.threshold, k.rate) == (6, 0.5, ScannerKnobs().rate)
-    assert config.value("lifecycle", "start_ratio", 0.7) == 0.8
+    assert config.value("lifecycle", "start_tokens", 60000) == 80000
 
 
 def test_broken_file_falls_back_to_defaults(settings, tmp_path):

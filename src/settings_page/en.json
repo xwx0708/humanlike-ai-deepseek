@@ -1,0 +1,561 @@
+{
+  "ui": {
+    "title": "Settings",
+    "path": "Settings file: ",
+    "restore_all": "Restore all defaults",
+    "save": "Save",
+    "default": "Default",
+    "default_on": "Default: on",
+    "empty": "(empty)",
+    "reset": "Reset to default",
+    "features": "Feature switches",
+    "features_help": "Any feature can be turned off on its own: the behaviour stops, the parameters are kept.",
+    "keywords": "Keyword lists",
+    "keywords_help": "Requests about memory are recognised by keywords (D29). Click a default word to disable it (strikethrough), add your own phrasing below; click a custom word to remove it.",
+    "chip_on": "Click to disable",
+    "chip_off": "Click to enable",
+    "chip_del": "Click to remove",
+    "add_placeholder": "Add your own phrasing",
+    "add": "Add",
+    "add_label": ": add phrasing",
+    "saved": "Saved to ",
+    "save_failed": "Save failed: ",
+    "load_failed": "Failed to load settings: ",
+    "confirm_restore": "Restore every setting to its default? Nothing is written until you save.",
+    "restored": "Restored to defaults; click Save to write the file.",
+    "restart_hint": "Restart AstrBot for changes to take effect.",
+    "lang_button": "中文",
+    "astrbot_label": "AstrBot's current thinking model",
+    "astrbot_help": "The thinking model used for conversation is whatever is selected in the AstrBot web UI; this shows the models enabled in AstrBot's config. Without AstrBot (command-line platform) it is configured in .env.",
+    "astrbot_none": "No AstrBot config found (data folder/astrbot/cmd_config.json)",
+    "astrbot_follow": "takes precedence",
+    "pick": "Choose…",
+    "pick_title": "Choose a folder",
+    "pick_up": "Up",
+    "pick_here": "Use this folder",
+    "pick_cancel": "Cancel"
+  },
+  "sections": {
+    "general": {
+      "title": "Data location",
+      "help": "The memory database (with its archive), persona, lifecycle state, action log and images all live in the data folder."
+    },
+    "models": {
+      "title": "Models",
+      "help": "Two-model design: the thinking model handles the conversation; the subconscious model tidies memory in the background; each can be local or a cloud API. The thinking model is chosen in the AstrBot web UI (or in .env for the command-line platform); the subconscious model is chosen here, and each vendor's connection fields appear only when that vendor is selected. API keys go in .env only."
+    },
+    "lifecycle": {
+      "title": "Start-up",
+      "help": "Familiar phase → start-up → running phase. During the familiar phase the full chat history is sent as usual; once usage reaches the start-up token count, every conversation is consolidated at once and the probability sea is built."
+    },
+    "forgetting": {
+      "title": "Forgetting curve",
+      "help": "Memory strength S(t) = 0.5^(Δt / H). Half-life H = base half-life × emotion factor^a × importance factor^i × edge bonus, where a is relative arousal and i is importance (0–1)."
+    },
+    "clock": {
+      "title": "Memory clock",
+      "help": "Decay runs on conversation time, not calendar time: fast while chatting, slower after a pause, stopped after long enough. Not using the system for a long time does not erase everything (D21)."
+    },
+    "scanner": {
+      "title": "Scanning and surfacing",
+      "help": "The scanner polls one month-partition per minute. Each segment is Bernoulli-sampled: P = 1 − e^(−p·Δt), p = rate cap · σ((S + priming − threshold) / T). Hits enter the surfacing buffer."
+    },
+    "fresh": {
+      "title": "Fresh memory",
+      "help": "In the running phase no chat history is attached: what was just said stays present as almost-undecayed memory (D30, D31)."
+    },
+    "resident": {
+      "title": "Resident bar",
+      "help": "Besides exempt items (profile sources, things the user asked to remember, repeatedly mentioned), threads compete for seats by weighted score. Resident items do not decay and are not scanned."
+    },
+    "sweep": {
+      "title": "Batch forgetting and archive",
+      "help": "Segments below the forgetting threshold queue up; a full batch is processed at once: most move to the archive (original text kept, searchable), a random few are abstracted to keywords and start decaying afresh."
+    },
+    "archive": {
+      "title": "Archive search",
+      "help": "Archive search: jieba tokenisation + BM25 ranking over archived segments' titles and original text. Runs only when the user asks (D26)."
+    },
+    "runner": {
+      "title": "Subconscious consolidation",
+      "help": "After a pause the subconscious model consolidates: segment, score, attach to threads, tune; duplicate threads are merged at night."
+    },
+    "merge": {
+      "title": "Thread merging",
+      "help": "At night, recently created threads are checked and merged into existing ones when they duplicate them."
+    },
+    "candidates": {
+      "title": "Thread candidates",
+      "help": "Candidate threads offered to the subconscious model when deciding where a segment belongs: union of recently active ∪ keyword overlap ∪ shared people and other sources."
+    },
+    "boundaries": {
+      "title": "Segment boundaries",
+      "help": "First-layer segmentation rules: split conversations by time gap and force candidate boundaries where a stretch runs too long."
+    },
+    "profile": {
+      "title": "Profile conflicts",
+      "help": "When a new fact contradicts an old one in the profile, dice are rolled by the old fact's firmness: evoke / overwrite / neither (D16)."
+    },
+    "attachments": {
+      "title": "Files and images",
+      "help": "Images go straight to the thinking model; files are extracted to text for the current prompt, with only a summary kept in memory (D38)."
+    },
+    "action": {
+      "title": "Autonomous action limits",
+      "help": "QQ actions {name} performs on its own under strict rate limits (D35): each action at most N times per window (days adjustable)."
+    }
+  },
+  "fields": {
+    "general.ai_name": {
+      "label": "Its name",
+      "help": "The name you gave it; used in this page's explanations. How it calls itself in chat is up to the persona file."
+    },
+    "general.data_dir": {
+      "label": "Data folder",
+      "help": "Where memory.db (probability sea and archive), persona.md, lifecycle.json, action_log.json and images/ are stored. Relative paths are resolved from the project root. Under Docker only paths inside the project work unless you mount the target folder in docker-compose.yml. Old data is not migrated automatically; copy the files over by hand."
+    },
+    "models.thinking_context_limit": {
+      "label": "Thinking model context limit",
+      "help": "Maximum context length of the thinking model (tokens); update it when you switch models. Start-up is now by token count (D43); this value is only used for other estimates."
+    },
+    "models.subconscious_provider": {
+      "label": "Subconscious model provider",
+      "help": "Ollama: runs locally (recommended; consolidation never leaves your machine; needs a GPU). Everything else uses an OpenAI-compatible API: the listed vendors have preset addresses, the key goes in OPENAI_COMPAT_API_KEY in .env (DeepSeek uses DEEPSEEK_API_KEY); for an unlisted service choose “custom address” and fill in the URL below. The subconscious model must reliably output JSON; models under 7B consolidate noticeably worse.",
+      "options": [
+        "Ollama (local)",
+        "OpenAI-compatible API (custom address)",
+        "DeepSeek",
+        "OpenAI",
+        "Anthropic Claude",
+        "Google Gemini",
+        "Alibaba Qwen (DashScope)",
+        "Zhipu GLM",
+        "Moonshot Kimi",
+        "SiliconFlow",
+        "OpenRouter",
+        "LM Studio (local)",
+        "vLLM (local)"
+      ]
+    },
+    "models.subconscious_model": {
+      "label": "Subconscious model",
+      "help": "Model name. The default Qwen 27B Q4 quant needs about 17 GB of VRAM (e.g. RTX 3090/4090); with less VRAM use a 7B–14B model at some cost in consolidation quality."
+    },
+    "models.openai_compat_base_url": {
+      "label": "OpenAI-compatible API address",
+      "help": "Used when the provider is the custom OpenAI-compatible option, e.g. https://api.deepseek.com or http://127.0.0.1:8000/v1. The key goes in OPENAI_COMPAT_API_KEY in .env."
+    },
+    "models.deepseek_thinking": {
+      "label": "Subconscious model: DeepSeek thinking mode",
+      "help": "When the subconscious provider is DeepSeek: reason before consolidating, more accurate but slower and more tokens. Unrelated to the thinking model (chosen in AstrBot)."
+    },
+    "models.ollama_base_url": {
+      "label": "Ollama address",
+      "help": "Address of the local Ollama service. Under Docker docker-compose.yml rewrites it to host.docker.internal."
+    },
+    "models.ollama_keep_alive": {
+      "label": "Ollama keep-alive",
+      "help": "How long an idle model stays loaded, e.g. 30m or 2h. Loading a large model the first time takes 1–2 minutes."
+    },
+    "models.ollama_num_ctx": {
+      "label": "Ollama context length",
+      "help": "How much the subconscious model can read at once. Larger uses more VRAM; the segmentation batch size (Consolidation → segmentation batch) must be well below it."
+    },
+    "lifecycle.start_tokens": {
+      "label": "Start-up token count",
+      "help": "The memory system starts once context usage reaches this many tokens (D43; default 60,000, adjustable). Not a fraction of the limit: with a 1M-token model, waiting for 70% would make the familiar phase so long the system never kicks in. Start-up happens only once."
+    },
+    "forgetting.base_half_life": {
+      "label": "Base half-life",
+      "help": "Half-life of an unremarkable moment (a = i = 0)."
+    },
+    "forgetting.emotion_max": {
+      "label": "Emotion factor",
+      "help": "How much the half-life is multiplied when relative arousal is 1, interpolated exponentially."
+    },
+    "forgetting.importance_max": {
+      "label": "Importance factor",
+      "help": "How much the half-life is multiplied when importance is 1, interpolated exponentially."
+    },
+    "forgetting.reinforce": {
+      "label": "Reinforcement strength",
+      "help": "Retrieval reinforcement: when a memory is actually used, S returns to full and H × (1 + strength × (1 − S)). The closer to forgotten, the stronger the reinforcement."
+    },
+    "forgetting.position_bonus": {
+      "label": "Edge bonus",
+      "help": "Half-life multiplier for the first and last segment of a conversation (primacy and recency)."
+    },
+    "forgetting.forget_line": {
+      "label": "Forgetting threshold",
+      "help": "Below this S the memory counts as forgotten: it leaves scan sampling and joins the clean-up queue."
+    },
+    "forgetting.adjust_step_max": {
+      "label": "Single tuning cap",
+      "help": "Largest factor by which the subconscious model may change one memory's half-life in a single step; the floor is its reciprocal (guard rail)."
+    },
+    "forgetting.adjust_total_max": {
+      "label": "Cumulative tuning cap",
+      "help": "Largest cumulative factor for one memory; the floor is its reciprocal (guard rail)."
+    },
+    "forgetting.decay_model": {
+      "label": "Decay curve",
+      "help": "Shape of the strength-over-time curve. Exponential is the default; power-law has a longer tail so old things fade slower; no-decay is for debugging only. You can also drop your own curve into plugins/ in the data folder (see contracts/plugins.py).",
+      "options": [
+        "Exponential",
+        "Power law",
+        "No decay"
+      ]
+    },
+    "clock.speed": {
+      "label": "Chat speed",
+      "help": "Memory time relative to real time while a conversation is active."
+    },
+    "clock.idle_after": {
+      "label": "Slow-down delay",
+      "help": "How long after the last message the clock starts slowing down."
+    },
+    "clock.idle_rate": {
+      "label": "Slowed rate",
+      "help": "Rate after slowing down, relative to chat speed."
+    },
+    "clock.freeze_after": {
+      "label": "Freeze delay",
+      "help": "How long after slowing down memory time stops completely."
+    },
+    "scanner.buffer_size": {
+      "label": "Surfacing buffer size",
+      "help": "How many segments the surfacing buffer holds at once, FIFO replacement. Surfacing alone does not reinforce."
+    },
+    "scanner.threshold": {
+      "label": "Surfacing threshold",
+      "help": "Centre of the sigmoid: when S + priming equals it, p is half the rate cap."
+    },
+    "scanner.temp_focus": {
+      "label": "Focused temperature T",
+      "help": "Temperature while staying on one topic: low temperature makes sampling more deterministic, strong memories surface more consistently."
+    },
+    "scanner.temp_diffuse": {
+      "label": "Diffuse temperature T",
+      "help": "Temperature during small talk: high temperature makes sampling more random, weak memories get a chance."
+    },
+    "scanner.focus_turns": {
+      "label": "Focus threshold",
+      "help": "How many consecutive user messages on one topic count as fully focused (temperature down to the focused value)."
+    },
+    "scanner.rate": {
+      "label": "Rate cap",
+      "help": "Upper bound on surfacing intensity per minute. At 0.02 the strongest, most relevant memory surfaces about every 50 minutes."
+    },
+    "scanner.priming_max": {
+      "label": "Priming cap",
+      "help": "Priming effect: the largest bonus a segment gets for matching the current topic's keywords."
+    },
+    "scanner.person_bonus": {
+      "label": "Person bonus",
+      "help": "Bonus when the people in a segment overlap with the current topic."
+    },
+    "scanner.negative_damp": {
+      "label": "Negative damping",
+      "help": "How much, at most, a negative segment's surfacing probability drops when the topic is unrelated."
+    },
+    "scanner.surface_policy": {
+      "label": "Surfacing policy",
+      "help": "Which memories enter the surfacing buffer. Probabilistic is the default (Bernoulli sampling); relevance search takes only the few most related to the topic, no sampling; off means memories appear only as fresh memory, in the resident bar, or on archive search. You can also drop your own policy into plugins/ in the data folder.",
+      "options": [
+        "Probabilistic",
+        "Relevance search",
+        "Off"
+      ]
+    },
+    "fresh.floor": {
+      "label": "Presence floor",
+      "help": "Messages with strength at or above this stay present without sampling."
+    },
+    "fresh.half_life": {
+      "label": "Fresh-memory half-life",
+      "help": "Half-life used for messages not yet scored."
+    },
+    "fresh.split_at": {
+      "label": "Mid-chat consolidation trigger",
+      "help": "When the oldest unconsolidated message drops to this strength, a batch is consolidated mid-conversation. Must be above the presence floor."
+    },
+    "fresh.split_upto": {
+      "label": "Mid-chat consolidation range",
+      "help": "The batch covers messages below this strength; newer ones wait for the next batch. Must be above the trigger."
+    },
+    "resident.seats": {
+      "label": "Competed seats",
+      "help": "Number of resident seats open to competition."
+    },
+    "resident.w_importance": {
+      "label": "Weight: importance",
+      "help": "Score = Σ weight × component. The four weights should sum to about 1."
+    },
+    "resident.w_emotion": {
+      "label": "Weight: emotional intensity",
+      "help": "As above."
+    },
+    "resident.w_activity": {
+      "label": "Weight: activity",
+      "help": "As above. Activity decays from the last mention."
+    },
+    "resident.w_recall": {
+      "label": "Weight: recall frequency",
+      "help": "As above. Recall frequency = count / (count + saturation)."
+    },
+    "resident.ongoing_factor": {
+      "label": "Ongoing factor",
+      "help": "Score multiplier for threads that are still ongoing."
+    },
+    "resident.activity_half_life": {
+      "label": "Activity half-life",
+      "help": "How long without a mention halves activity."
+    },
+    "resident.recall_saturation": {
+      "label": "Recall saturation",
+      "help": "Recall frequency = count / (count + this value)."
+    },
+    "resident.repeated_conversations": {
+      "label": "Repeated-mention threshold",
+      "help": "Mentioned in at least this many different conversations counts as exempt “repeatedly mentioned”."
+    },
+    "sweep.batch_size": {
+      "label": "Batch size",
+      "help": "How many queued segments trigger one batch."
+    },
+    "sweep.keep_ratio": {
+      "label": "Keep ratio",
+      "help": "Fraction of each batch kept at random for keyword abstraction (at least 1)."
+    },
+    "sweep.excerpt_chars": {
+      "label": "Abstraction excerpt",
+      "help": "How much original text the subconscious model sees when abstracting to keywords."
+    },
+    "archive.limit": {
+      "label": "Results",
+      "help": "Maximum results per search."
+    },
+    "archive.excerpt_chars": {
+      "label": "Result excerpt length",
+      "help": "How much original text the thinking model sees per result."
+    },
+    "runner.thread_confidence_min": {
+      "label": "Attach confidence threshold",
+      "help": "Below this confidence that a segment belongs to a thread, a new thread is created."
+    },
+    "runner.segment_budget": {
+      "label": "Segmentation batch",
+      "help": "Maximum tokens per batch of messages when segmenting; must be well below the subconscious model's context length."
+    },
+    "runner.pause": {
+      "label": "Pause threshold",
+      "help": "How long a conversation must pause before consolidation starts."
+    },
+    "runner.night_hour": {
+      "label": "Nightly merge hour",
+      "help": "After which hour of the day thread merging runs once."
+    },
+    "merge.recent_days": {
+      "label": "Recent window",
+      "help": "Threads created within this many days are checked for merging."
+    },
+    "merge.confidence_min": {
+      "label": "Merge confidence threshold",
+      "help": "Merge only at or above this confidence. Keep it above the attach threshold: a wrong merge is harder to notice than a wrong new thread."
+    },
+    "candidates.max_total": {
+      "label": "Total candidates",
+      "help": "Maximum candidate threads offered at once."
+    },
+    "candidates.recent": {
+      "label": "Recently active",
+      "help": "How many of the most recently active threads to include."
+    },
+    "candidates.keyword": {
+      "label": "Keyword overlap",
+      "help": "How many threads to include by BM25 keyword overlap."
+    },
+    "candidates.min_alias_len": {
+      "label": "Minimum name length",
+      "help": "Minimum characters in a name for person matching (very short names mismatch easily)."
+    },
+    "boundaries.conversation_gap_minutes": {
+      "label": "Conversation gap",
+      "help": "A silence longer than this starts a new conversation."
+    },
+    "boundaries.max_turns": {
+      "label": "Maximum messages",
+      "help": "Force a candidate boundary after this many messages since the last one."
+    },
+    "boundaries.max_minutes": {
+      "label": "Maximum duration",
+      "help": "Force a candidate boundary after this long since the last one."
+    },
+    "profile.firm_half_life": {
+      "label": "Firmness half-life",
+      "help": "How long without a mention halves an old fact's firmness."
+    },
+    "profile.evoke_min": {
+      "label": "Minimum evoke probability",
+      "help": "Probability that the least firm old fact is evoked."
+    },
+    "profile.evoke_max": {
+      "label": "Maximum evoke probability",
+      "help": "Probability that the firmest old fact is evoked."
+    },
+    "profile.overwrite_max": {
+      "label": "Maximum overwrite probability",
+      "help": "Probability that the least firm old fact is overwritten (moved to the archive)."
+    },
+    "attachments.max_mb": {
+      "label": "File size limit",
+      "help": "Files larger than this are not read."
+    },
+    "attachments.prompt_chars": {
+      "label": "Prompt character limit",
+      "help": "Maximum characters of one file put into the prompt; the rest is cut."
+    },
+    "attachments.memory_chars": {
+      "label": "Memory excerpt length",
+      "help": "How much of a file's beginning is recorded in memory."
+    },
+    "action.avatar_times": {
+      "label": "Change avatar: times",
+      "help": "Maximum avatar changes within the window."
+    },
+    "action.avatar_days": {
+      "label": "Change avatar: window",
+      "help": "Length of the rate window for avatar changes."
+    },
+    "action.nickname_times": {
+      "label": "Change nickname: times",
+      "help": "Maximum nickname changes within the window."
+    },
+    "action.nickname_days": {
+      "label": "Change nickname: window",
+      "help": "Length of the rate window for nickname changes."
+    },
+    "action.signature_times": {
+      "label": "Change signature: times",
+      "help": "Maximum signature changes within the window."
+    },
+    "action.signature_days": {
+      "label": "Change signature: window",
+      "help": "Length of the rate window for signature changes."
+    },
+    "action.post_times": {
+      "label": "Post moment: times",
+      "help": "Maximum posts within the window."
+    },
+    "action.post_days": {
+      "label": "Post moment: window",
+      "help": "Length of the rate window for posts."
+    },
+    "action.delete_times": {
+      "label": "Delete moment: times",
+      "help": "Maximum deletions within the window."
+    },
+    "action.delete_days": {
+      "label": "Delete moment: window",
+      "help": "Length of the rate window for deletions."
+    },
+    "action.post_visibility": {
+      "label": "Moment visibility",
+      "help": "Who can see moments the AI posts on its own in QQ Zone.",
+      "options": [
+        "Everyone",
+        "Friends",
+        "Only me"
+      ]
+    }
+  },
+  "units": {
+    "token": "tokens",
+    "天": "days",
+    "秒": "s",
+    "分钟": "min",
+    "倍": "×",
+    "字": "chars",
+    "MB": "MB"
+  },
+  "features": {
+    "batch_sweep": {
+      "label": "Batch forgetting",
+      "help": "When off, segments below the forgetting threshold just stop being sampled and are not moved to the archive."
+    },
+    "mid_chat_split": {
+      "label": "Mid-chat consolidation",
+      "help": "In a long conversation without pauses, consolidate a batch before fresh memory expires (D31)."
+    },
+    "nightly_merge": {
+      "label": "Nightly thread merging",
+      "help": "Merge duplicate threads every night."
+    },
+    "read_images": {
+      "label": "Read images",
+      "help": "Pass images the user sends to the thinking model (the model must support image input)."
+    },
+    "read_files": {
+      "label": "Read files",
+      "help": "Extract the content of files the user sends (PDF, Word, Excel, PPT, text, code…)."
+    },
+    "keyword_requests": {
+      "label": "Keyword memory requests",
+      "help": "Recognise requests like “remember”, “forget”, “check the archive” (D29). When off, these are treated as ordinary chat."
+    },
+    "persona_reminder": {
+      "label": "Persona reminder",
+      "help": "Add a one-line persona reminder every turn so the tone is not pulled off by the chat history."
+    },
+    "web_search": {
+      "label": "Web search",
+      "help": "Use AstrBot's built-in web search (D36); source and key are configured in AstrBot."
+    },
+    "qq_set_avatar": {
+      "label": "Change avatar autonomously",
+      "help": "Let {name} change its QQ avatar on its own (images from images/ in the data folder)."
+    },
+    "qq_set_nickname": {
+      "label": "Change nickname autonomously",
+      "help": "Let {name} change its QQ nickname on its own."
+    },
+    "qq_set_signature": {
+      "label": "Change signature autonomously",
+      "help": "Let {name} change its QQ signature on its own."
+    },
+    "qq_post_moment": {
+      "label": "Post moments autonomously",
+      "help": "Let {name} post QQ Zone moments on its own."
+    },
+    "qq_delete_moment": {
+      "label": "Delete moments autonomously",
+      "help": "Let {name} delete moments it posted."
+    }
+  },
+  "word_lists": {
+    "forget": {
+      "label": "Ask to forget",
+      "help": "Starts the forgetting flow: confirm which event, then the user chooses permanent deletion or archiving (D25)."
+    },
+    "archive": {
+      "label": "Ask to check the archive",
+      "help": "Triggers an archive search (D26: only when the user asks)."
+    },
+    "remember": {
+      "label": "Ask to remember",
+      "help": "When a user message contains any of these, its segment is marked “asked to remember” (resident, exempt from competition)."
+    },
+    "choice_erase": {
+      "label": "Choice: delete permanently",
+      "help": "Phrasings that choose permanent deletion in the forgetting flow."
+    },
+    "choice_archive": {
+      "label": "Choice: archive",
+      "help": "Phrasings that choose archiving in the forgetting flow."
+    },
+    "choice_cancel": {
+      "label": "Choice: cancel",
+      "help": "Phrasings that cancel the forgetting flow."
+    }
+  }
+}
