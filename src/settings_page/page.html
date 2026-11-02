@@ -29,7 +29,7 @@
   #notice.show { display: block; margin-top: 14px; }
   #notice code { font-size: 12.5px; }
   .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; padding: 18px 28px 80px; max-width: 1180px; }
-  nav { position: sticky; top: 70px; align-self: start; display: flex; flex-direction: column; }
+  nav { position: sticky; top: 70px; align-self: start; display: flex; flex-direction: column; max-height: calc(100vh - 86px); overflow-y: auto; padding-right: 4px; }  /* 比窗口高时自己滚，整体钉住不跟页面走 */
   nav a { color: var(--ink-2); text-decoration: none; padding: 4px 10px; border-left: 2px solid transparent; font-size: 13.5px; }
   nav a:hover { color: var(--ink); border-left-color: var(--line); }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px 22px 8px; margin-bottom: 18px; scroll-margin-top: 80px; }
@@ -504,7 +504,13 @@ function render() {
 }
 
 // 人设：直接在这里写，或选一个文本文件读进来；存到数据文件夹的 persona.md，改了立即生效（D29）
-let PERSONA = { path: '', text: '', loaded: false };
+let PERSONA = { path: '', text: '', loaded: false, draft: null };  // text：文件里的；draft：正在编辑的
+const personaDirty = () => PERSONA.loaded && PERSONA.draft != null && PERSONA.draft !== PERSONA.text;
+async function savePersona(opts = {}) {
+  const r = await fetch('/api/persona', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: PERSONA.draft ?? PERSONA.text }), ...opts });
+  if (!r.ok) throw new Error((await r.json()).error);
+  const d = await r.json(); PERSONA.path = d.path; PERSONA.text = PERSONA.draft ?? PERSONA.text; return d;
+}
 function personaSection() {
   const sec = h('section', { id: 'persona', class: 'persona' }, h('h2', {}, '人设'),
     h('p', {}, '它是谁、怎么说话、有什么习惯——由你用文字描述，一般几千字以内。回应和主动发消息都用（D29）。存在数据文件夹的 persona.md，保存后立即生效，不用重启。名字请和"它的名字"保持一致。'));
@@ -512,16 +518,16 @@ function personaSection() {
   const count = h('span', { class: 'unit' });
   const file = h('input', { type: 'file', accept: '.md,.txt,text/plain,text/markdown', style: 'display:none' });
   const upd = () => { count.textContent = `${ta.value.length} 字${PERSONA.path ? ' · ' + PERSONA.path : ''}`; };
-  ta.addEventListener('input', upd);
-  file.addEventListener('change', async () => { const f = file.files[0]; if (!f) return; ta.value = await f.text(); upd(); notice(`已读入「${f.name}」，点"保存人设"写入。`); });
+  ta.addEventListener('input', () => { PERSONA.draft = ta.value; upd(); });
+  file.addEventListener('change', async () => { const f = file.files[0]; if (!f) return; ta.value = await f.text(); PERSONA.draft = ta.value; upd(); notice(`已读入「${f.name}」，点"保存人设"写入。`); });
   const save = h('button', { class: 'primary', type: 'button', onclick: async () => {
-    const r = await fetch('/api/persona', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: ta.value }) });
-    if (!r.ok) { notice('保存人设失败：' + (await r.json()).error); return; }
-    const d = await r.json(); PERSONA.path = d.path; PERSONA.text = ta.value; upd(); notice(`人设已保存到 <code>${d.path}</code>，立即生效。`);
+    PERSONA.draft = ta.value;
+    try { const d = await savePersona(); upd(); notice(`人设已保存到 <code>${d.path}</code>，立即生效。`); }
+    catch (e) { notice('保存人设失败：' + e.message); }
   } }, '保存人设');
   sec.append(ta, h('div', { class: 'bar' }, save, h('button', { type: 'button', onclick: () => file.click() }, '从文本文件读入…'), file,
     h('a', { class: 'ext', href: 'https://github.com/hitikem/qqbot-personas', target: '_blank', rel: 'noopener' }, '开源人设库 ↗'), h('span', { class: 'unit' }, '喜欢的话，建议给原作者点点 ⭐'), count));
-  const fill = () => { ta.value = PERSONA.text; upd(); };
+  const fill = () => { ta.value = PERSONA.draft ?? PERSONA.text; upd(); };
   if (PERSONA.loaded) fill();
   else fetch('/api/persona').then(r => r.json()).then(d => { PERSONA = { ...d, loaded: true }; fill(); }).catch(() => { count.textContent = '读不到人设文件'; });
   return sec;
@@ -534,6 +540,7 @@ async function load() {
   const r = await fetch('/api/settings');
   const data = await r.json();
   SCHEMA = data.schema; state = data.values || {}; EN = data.en || {}; PATH = data.path; ASTRBOT = data.astrbot || [];
+  SAVED = JSON.stringify(state);
   render();
   if (location.hash) document.querySelector(location.hash)?.scrollIntoView();  // 带 #分区 打开时直接跳过去
 }
@@ -543,12 +550,24 @@ $('#lang').addEventListener('click', () => {
   render();
 });
 
+// 顶部"保存"：存全部设置，人设有改动也一起存；"保存人设"只存人设
+let SAVED = '';  // 上次保存时的设置，用来判断有没有没存的改动
 $('#save').addEventListener('click', async () => {
   const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state) });
   if (!r.ok) { notice(t('save_failed') + (await r.json()).error); return; }
   const data = await r.json();
-  state = data.saved; render();
-  notice(`${t('saved')}<code>${data.path}</code>. ${t('restart_hint').replace('docker compose restart astrbot', '<code>docker compose restart astrbot</code>')}`);
+  state = data.saved; SAVED = JSON.stringify(state);
+  let extra = '';
+  if (personaDirty()) { try { await savePersona(); extra = ' 人设也已保存，立即生效。'; } catch (e) { extra = ' 人设保存失败：' + e.message; } }
+  render();
+  notice(`${t('saved')}<code>${data.path}</code>. ${t('restart_hint').replace('docker compose restart astrbot', '<code>docker compose restart astrbot</code>')}${extra}`);
+});
+// 没保存就关掉页面：自动保存（用户 2026-11-02 定）。keepalive 让请求在页面关闭后也能发完
+window.addEventListener('pagehide', () => {
+  if (SAVED && JSON.stringify(state) !== SAVED) {
+    fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(state), keepalive: true }).catch(() => {});
+  }
+  if (personaDirty()) savePersona({ keepalive: true }).catch(() => {});
 });
 $('#resetAll').addEventListener('click', () => {
   if (!confirm(t('confirm_restore'))) return;
