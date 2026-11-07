@@ -26,7 +26,11 @@ def test_run_feeds_memory_and_backend_until_quit():
     )
     assert said == ["你说：你好", "你说：今天好累"]
     system, history, prompt = backend.calls[1]
-    assert (system, history[:2], prompt) == ("人设", ["你好", "你说：你好"], "今天好累")  # 熟悉期：带历史
+    assert (system.split("\n\n")[0], history[:2], prompt) == (
+        "人设",
+        ["你好", "你说：你好"],
+        "今天好累",
+    )  # 熟悉期：带历史
     assert len(history) == 3  # 末尾是人设提醒
     assert [t.content for t in memory.turns] == ["你好", "你说：你好", "今天好累", "你说：今天好累"]
 

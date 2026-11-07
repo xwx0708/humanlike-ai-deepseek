@@ -16,7 +16,7 @@ def test_recent_window_sends_last_n_turns():
         {"role": "assistant", "content": "四"},
         {"role": "system", "content": PERSONA_REMINDER},
     ]
-    assert p.prompt == "五" and p.system == "人设"
+    assert p.prompt == "五" and p.system.split("\n\n")[0] == "人设"  # 后面是现在的时间
 
 
 def test_recent_window_has_no_memory_requests():

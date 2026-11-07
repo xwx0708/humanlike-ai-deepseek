@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from contracts.llm import ChatModel
-from contracts.memory import ArchiveHit, ChatTurn, ForgetTarget, MemoryContext
+from contracts.memory import ArchiveHit, ChatTurn, ForgetTarget, MemoryContext, MemoryHit, memory_label
 from memory.archive import forget_thread, search_archive
 from memory.boundaries import ingest_turn
 from memory.budget import DEFAULT_KNOBS as BUDGET
@@ -24,7 +24,7 @@ from memory.lifecycle import register, report_context_used
 from memory.profile import take_evocations
 from memory.resident import resident_block
 from memory.runner import TickReport, tick
-from memory.scanner import Scanner, focus_of, search_memory
+from memory.scanner import IN_MEMORY, Scanner, focus_of, search_memory, use_memory
 from memory.store import DEFAULT_PATH, MemoryStore
 from memory.tokens import estimate_tokens
 from runtime.lifecycle import DEFAULT_PATH as LIFECYCLE_PATH
@@ -54,9 +54,10 @@ class DefaultMemoryService:
     def context_for_turn(self, turn: ChatTurn, ts: float) -> MemoryContext:
         self.scanner.refresh_buffer(ts)
         phase = self._phase()  # 整轮只读一次：后台线程可能正好在这一轮里把阶段切到运行期
+        previous = next((t.ts for t in self.store.iter_turns_newest_first() if t.id != turn.id), None)
         if phase == FAMILIAR:
             history = [t for t in self.store.all_turns(include_forgotten=False) if t.id != turn.id]
-            return MemoryContext(phase, history=history)
+            return MemoryContext(phase, history=history, previous_ts=previous)
         # 运行期：话题和专注程度交给扫描器，下一次扫描按新的话题充电、按专注程度定温度（D26）
         self.scanner.set_topic(turn.content)
         self.scanner.set_focus(focus_of(self.store, turn.conversation_id))
@@ -69,6 +70,7 @@ class DefaultMemoryService:
             surfaced=_surfaced_block(surfaced, take_evocations(self.store)),
             fresh=fresh_block(fresh),
             surfaced_ids=[s.segment_id for s in surfaced],
+            previous_ts=previous,
         )
 
     def scan(self, ts: float) -> None:
@@ -107,6 +109,19 @@ class DefaultMemoryService:
     def search_archive(self, query: str) -> list[ArchiveHit]:
         return search_archive(self.store, query)
 
+    def search(self, query: str, ts: float, limit: int = 5) -> list[MemoryHit]:
+        return [
+            MemoryHit(h.segment_id, h.text, h.clarity) for h in search_memory(self.store, query, ts, limit)
+        ]
+
+    def use(self, segment_id: int, ts: float) -> None:
+        try:
+            seg = self.store.get_segment(segment_id)
+        except KeyError:
+            return  # 模型写错编号，或这一轮里刚被忘掉
+        if seg.state in IN_MEMORY:
+            use_memory(self.store, segment_id, ts)
+
     def set_meta(self, key: str, value: str) -> None:
         self.store.set_meta(key, value)
 
@@ -118,7 +133,8 @@ def _surfaced_block(items: list, evoked: list[str] = ()) -> str:
     """浮现区：自己冒头的记忆，加上被唤起的旧事实（D16）。"""
     if not items and not evoked:
         return ""
-    lines = [f"- （清晰度 {s.clarity:.1f}）{s.text}" for s in items] + [f"- {e}" for e in evoked]
+    lines = [f"- {memory_label(s.segment_id)}（清晰度 {s.clarity:.1f}）{s.text}" for s in items]
+    lines += [f"- {e}" for e in evoked]
     budget = BUDGET.surfaced - estimate_tokens(SURFACED_HEADER) - 1  # 上下文预算：放不下的这一轮不给
     return "\n".join([SURFACED_HEADER, *fit_lines(lines, budget, "（还有 {n} 件事隐约想起，这次顾不上）")])
 
@@ -161,7 +177,10 @@ class RecentWindowMemory:
 
     def context_for_turn(self, turn: ChatTurn, ts: float) -> MemoryContext:
         history = [t for t in self.turns if t.id != turn.id]
-        return MemoryContext(FAMILIAR, history=history[-self.window :])  # 永远是"上下文就是上下文"
+        previous = history[-1].ts if history else None
+        return MemoryContext(
+            FAMILIAR, history=history[-self.window :], previous_ts=previous
+        )  # 永远是"上下文就是上下文"
 
     def scan(self, ts: float) -> None:
         pass
@@ -187,6 +206,12 @@ class RecentWindowMemory:
 
     def search_archive(self, query: str) -> list[ArchiveHit]:
         return []
+
+    def search(self, query: str, ts: float, limit: int = 5) -> list[MemoryHit]:
+        return []
+
+    def use(self, segment_id: int, ts: float) -> None:
+        pass
 
     def set_meta(self, key: str, value: str) -> None:
         self.meta[key] = value

@@ -144,6 +144,7 @@ class MemoryContext:
     surfaced: str = ""  # 浮现区：自己冒头的记忆 + 被唤起的旧事实（D16、D26）
     fresh: str = ""  # 新鲜记忆：刚说过的话（D30）
     surfaced_ids: list[int] = field(default_factory=list)  # 浮现区里各片段的 id
+    previous_ts: float | None = None  # 这一条之前最近一条消息的时间（谁说的都算）；没有就是 None
 
 
 @dataclass
@@ -163,6 +164,21 @@ class ArchiveHit:
     start_ts: float
     score: float
     excerpt: str
+
+
+@dataclass
+class MemoryHit:
+    """主动检索的一条结果（思考模型自己想一想，D2；不含档案）。"""
+
+    segment_id: int
+    text: str  # 标题；只剩关键词的给关键词
+    clarity: float  # 清晰度 = 当前强度
+
+
+def memory_label(segment_id: int) -> str:
+    """给模型看的记忆编号（待议问题 14，用户 2026-11-07 定：回复里带隐藏标记）。
+    浮现区和检索结果里每条片段前面加这个；模型用到哪条，就在回复末尾写〔用到：记N〕，由回应模块取出后删掉。"""
+    return f"〔记{segment_id}〕"
 
 
 class MemoryService(Protocol):
@@ -197,6 +213,12 @@ class MemoryService(Protocol):
 
     def search_archive(self, query: str) -> list[ArchiveHit]:
         """只在用户要求时翻档案（D26）。"""
+
+    def search(self, query: str, ts: float, limit: int = 5) -> list[MemoryHit]:
+        """思考模型主动检索记忆系统（不含档案）。检索本身不加固。"""
+
+    def use(self, segment_id: int, ts: float) -> None:
+        """记忆使用回执：思考模型真正用到了这条记忆（D20 加固、D17 回忆频率）。不存在或已遗忘的片段忽略。"""
 
     def set_meta(self, key: str, value: str) -> None:
         """记一小块键值状态（插件存平台会话标识 owner_umo，以后主动发消息用）。"""

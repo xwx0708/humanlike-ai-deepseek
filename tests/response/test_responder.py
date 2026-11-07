@@ -1,5 +1,7 @@
 """回应模块：每轮组织的内容（D29、D30）、关键词识别的要求（D29、D25、D26）。不调用模型。"""
 
+import time
+
 import pytest
 
 from contracts.memory import EmotionScore, Segment
@@ -10,7 +12,7 @@ from memory.service import PENDING_KEY, DefaultMemoryService
 from memory.store import MemoryStore
 from memory.subconscious import consolidate
 from response import requests
-from response.responder import MEMORY_GUARD, PERSONA_REMINDER, Responder
+from response.responder import MEMORY_GUARD, PERSONA_REMINDER, RECALL_HINT, USED_NOTE, Responder, time_block
 from runtime.lifecycle import FAMILIAR, RUNNING
 
 MIN = 60.0
@@ -53,7 +55,7 @@ def test_familiar_phase_sends_whole_history(store):
         {"role": "assistant", "content": "嗯，你好"},
         {"role": "system", "content": PERSONA_REMINDER},  # 人设提醒在旧记录之后，免得口气被带偏
     ]
-    assert p.prompt == "今天好累" and p.system == PERSONA
+    assert p.prompt == "今天好累" and p.system.split("\n\n")[0] == PERSONA  # 后面是现在的时间
 
 
 def test_reply_reports_real_context_usage(store):
@@ -73,7 +75,8 @@ def test_running_phase_has_no_chat_history_only_memory(store):
     r.on_reply("辛苦了", 10)
     p = r.on_user_message("老板还骂我", 20)
     assert p.contexts == []  # D30：不另带聊天记录
-    assert p.prompt == "老板还骂我"
+    assert p.prompt.split("\n\n") == ["老板还骂我", USED_NOTE]  # 附注提醒标出用到的记忆（待议问题 14）
+    assert store.all_turns()[-1].content == "老板还骂我"  # 记忆里存的是原话
     assert p.system.startswith(PERSONA)
     assert "一直记得的事" in p.system  # 常驻栏
     assert "对方：今天加班到十点" in p.system and "我：辛苦了" in p.system  # 新鲜记忆
@@ -203,7 +206,8 @@ def test_own_actions_are_remembered(store):
 
 def test_persona_reminder_in_running_phase(store):
     r = responder(store)
-    assert r.on_user_message("在吗", 0).system.endswith(PERSONA_REMINDER)
+    system = r.on_user_message("在吗", 0).system
+    assert PERSONA_REMINDER in system and system.endswith(RECALL_HINT)  # 格式要求放最后
 
 
 def test_evoked_old_fact_surfaces_once(store):
@@ -215,3 +219,71 @@ def test_evoked_old_fact_surfaces_once(store):
     p = r.on_user_message("今晚吃火锅", 200)
     assert "你想起他以前说过：他不吃香菜（和他后来说的「他现在爱吃香菜」不一样）" in p.system
     assert "他不吃香菜（" not in r.on_user_message("要不要加香菜", 260).system
+
+
+def test_knows_the_real_time_and_how_long_since_last_chat(store, monkeypatch):
+    """用户 2026-11-07："让他自己意识到现实时间"。"""
+    monkeypatch.setattr("time.localtime", time.gmtime)  # 测试里按 UTC 算，不受本机时区影响
+    assert time_block(0) == "现在是 1970 年 1 月 1 日，星期四，凌晨 0:00。"
+    assert time_block(20 * 3600 + 5 * 60, 0).startswith("现在是 1970 年 1 月 1 日，星期四，晚上 20:05。")
+    assert time_block(3 * 86400, 0).endswith("离上次聊天过了 3 天。")
+    assert time_block(10 * MIN, 0).endswith("0:10。")  # 半小时内不提过了多久
+    r = responder(store)
+    r.on_user_message("在吗", 0)
+    assert "离上次聊天过了 2 天。" in r.on_user_message("我回来了", 2 * 86400).system
+
+
+# ---------- 用到哪条记忆（待议问题 14：回复里带隐藏标记）、主动想一想（待议问题 18） ----------
+
+
+def surfaced_once(store, r, ts=86400):
+    seg, _ = old_thread(store)
+    store.add_busy_span(MIN, 5 * 3600)  # 那句话不再新鲜，才会浮现（不和新鲜记忆重复）
+    r.memory.scanner.buffer = [Surfaced(seg.id, seg.title, 0.4, -0.6, 0)]
+    return seg, r.on_user_message("周末去看看她", ts)
+
+
+def test_surfaced_memory_has_label_and_hint(store):
+    r = responder(store)
+    seg, p = surfaced_once(store, r)
+    assert f"〔记{seg.id}〕（清晰度 0.4）他妈妈住院" in p.system
+    assert RECALL_HINT in p.system
+
+
+def test_used_mark_reinforces_and_is_stripped(store):
+    r = responder(store)
+    seg, _ = surfaced_once(store, r)
+    before = store.get_segment(seg.id)
+    said = r.on_reply(f"她身体好点了吗？\n〔用到：记{seg.id}、记99999〕", 86400 + MIN)
+    assert said == "她身体好点了吗？"  # 对方看不到标记
+    after = store.get_segment(seg.id)
+    assert after.recall_count == before.recall_count + 1 and after.half_life > before.half_life  # D20 加固
+    assert store.all_turns()[-1].content == "她身体好点了吗？"  # 记忆里也不存标记
+
+
+def test_only_ids_offered_this_turn_count(store):
+    r = responder(store)
+    seg, _ = old_thread(store)
+    r.on_user_message("在吗", 86400)  # 这一轮没给它看这条
+    before = store.get_segment(seg.id).recall_count
+    assert r.on_reply(f"在〔记{seg.id}〕\n【用到：记{seg.id}】", 86400 + MIN) == "在"
+    assert store.get_segment(seg.id).recall_count == before  # 模型编的号不算
+
+
+def test_recall_tool_offers_labels_without_reinforcing(store):
+    r = responder(store)
+    seg, _ = old_thread(store)
+    r.on_user_message("你还记得吗", 86400)
+    before = store.get_segment(seg.id).recall_count
+    found = r.recall("住院", 86400)
+    assert f"〔记{seg.id}〕" in found and "<记忆>" in found
+    assert store.get_segment(seg.id).recall_count == before  # 想一想本身不加固
+    r.on_reply(f"记得，你妈妈住院了\n〔用到：记{seg.id}〕", 86400 + MIN)
+    assert store.get_segment(seg.id).recall_count == before + 1
+    assert "没想起" in r.recall("火星旅行", 86400)
+
+
+def test_recall_in_familiar_phase_points_to_history(store):
+    r = responder(store, FAMILIAR)
+    r.on_user_message("你好", 0)
+    assert "还没启动" in r.recall("住院", 0)

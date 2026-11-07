@@ -10,10 +10,12 @@
 模型调用不在这里：插件拿 Prompt 去调 AstrBot 里配置的思考模型（D29），再把回复和用量交回 on_reply。
 """
 
+import re
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from contracts.memory import MemoryService
+from contracts.memory import MemoryService, memory_label
 from response import requests
 from response.attachments import Attachment
 from runtime import config
@@ -33,6 +35,30 @@ config.feature(
     '识别"记住、忘掉、翻档案"等要求（D29）。关闭后这些话按普通对话处理。',
 )
 config.feature("persona_reminder", "人设提醒", "每轮附加一句人设提醒，避免口吻被历史记录带偏。")
+config.feature(
+    "time_awareness",
+    "知道现在几点",
+    "每轮告诉{name} 现在的日期、星期、时间，以及离上次聊天过了多久（用户 2026-11-07 要求）。",
+)
+config.feature(
+    "memory_search",
+    "主动想一想",
+    "允许{name} 用工具主动检索记忆（不含档案，D26）。浮现之外，想不起来时自己去想。",
+)
+# 待议问题 14（用户 2026-11-07 定）：模型用到哪条记忆，就在回复末尾写〔用到：记N〕；取出编号加固后删掉，对方看不到
+# 实测（2026-11-07，deepseek-flash，6 轮对话）：只写在系统提示词里（哪怕放最后、写明格式），用到了也 0 次标；
+# 这一轮对方的话后面再附一句提醒（USED_NOTE），用到的 4 次里标了 3 次，没用到的 2 次都没乱标
+RECALL_HINT = (
+    "【必须遵守的格式】上面带〔记N〕编号的是你的记忆。只要你的回复提到或参考了其中任何一条，"
+    "回复的最后一行必须单独写〔用到：记N〕（多条用顿号隔开，例如〔用到：记12、记40〕）；"
+    "一条都没用到就不写这一行。这一行会被自动删掉，对方看不到；正文里不要写编号。"
+)
+USED_NOTE = "（系统附注，不是对方说的：如果你的回复用到了带〔记N〕编号的记忆，最后一行写〔用到：记N〕；没用到就不写。）"
+SEARCH_HINT = "想不起来、但觉得以前聊过的事，可以用 recall_memory 工具自己想一想。"
+USED_MARK = re.compile(r"[〔【\[]\s*用到\s*[:：]?([^〕】\]]*)[〕】\]]")
+LABEL = re.compile(r"〔记\s*\d+〕")
+WEEKDAYS = "一二三四五六日"
+GAP_SHOWN = 30 * 60  # 离上一条消息超过这么久才提"过了多久"（暂定，和对话停顿的判断相近）
 
 
 @dataclass
@@ -50,6 +76,8 @@ class Responder:
     def __init__(self, memory: MemoryService, persona: Callable[[], str]):
         self.memory = memory
         self.persona = persona
+        self.offered: set[int] = set()  # 这一轮给模型看过编号的片段：回复里只认这些（模型编的号不算）
+        self.running = False  # 这一轮是不是运行期
 
     def on_user_message(self, text: str, ts: float, attachments: Sequence[Attachment] = ()) -> Prompt:
         """attachments：对方这一条发来的文件和图片（D38）。全文只放进这一轮的提示词；记忆里只记发来了什么和开头一段。"""
@@ -60,24 +88,48 @@ class Responder:
         images = [a.image_path for a in attachments if a.kind == "图片"]
         persona = self.persona()
         ctx = self.memory.context_for_turn(turn, ts)
+        now = time_block(ts, ctx.previous_ts) if config.enabled("time_awareness") else ""
+        self.offered, self.running = set(ctx.surfaced_ids), ctx.phase != FAMILIAR
         if ctx.phase == FAMILIAR:
             contexts = [{"role": t.role, "content": t.content} for t in ctx.history]
             if persona and contexts and config.enabled("persona_reminder"):
                 contexts.append({"role": "system", "content": PERSONA_REMINDER})
-            return Prompt(_join(persona, _notes_block(notes)), contexts, prompt_text, notes, images)
+            return Prompt(_join(persona, now, _notes_block(notes)), contexts, prompt_text, notes, images)
         system = _join(
             persona,
             memory_block(ctx.resident, ctx.surfaced, ctx.fresh),
+            SEARCH_HINT if config.enabled("memory_search") else "",
+            now,
             _notes_block(notes),
             PERSONA_REMINDER if persona and config.enabled("persona_reminder") else "",
+            RECALL_HINT,  # 放最后：模型最容易照做
         )
-        return Prompt(system, [], prompt_text, notes, images)
+        return Prompt(system, [], _join(prompt_text, USED_NOTE), notes, images)  # 记忆里存的是原话，不含附注
 
-    def on_reply(self, text: str, ts: float, prompt_tokens: int | None = None) -> None:
-        """思考模型回复以后：存进记忆；回报实际用掉的上下文（熟悉期据此判断何时启动，D24）。"""
-        self.memory.ingest("assistant", text, ts)
+    def recall(self, query: str, ts: float) -> str:
+        """主动想一想（工具 recall_memory，待议问题 18）：只搜记忆系统，不翻档案（D26）。检索本身不加固，
+        回复里用到了才加固。返回给模型看的文字。"""
+        if not self.running:
+            return "记忆系统还没启动：以前的聊天记录都在上下文里，直接看就行。"
+        hits = self.memory.search(query, ts)
+        if not hits:
+            return f"想了想，没想起和「{query}」有关的事。可能没聊过，也可能已经忘了。"
+        self.offered |= {h.segment_id for h in hits}
+        found = "\n".join(f"- {memory_label(h.segment_id)}（清晰度 {h.clarity:.1f}）{h.text}" for h in hits)
+        return "想起来这些（清晰度低的只是模糊印象）：\n" + memory_block(found)
+
+    def on_reply(self, text: str, ts: float, prompt_tokens: int | None = None) -> str:
+        """思考模型回复以后：取出〔用到：记N〕加固那几条（只认这一轮给过的编号），删掉标记，存进记忆；
+        回报实际用掉的上下文（熟悉期据此判断何时启动，D24）。返回该发给对方的文字。"""
+        used = {int(n) for m in USED_MARK.findall(text) for n in re.findall(r"\d+", m)}
+        for sid in sorted(used & self.offered):
+            self.memory.use(sid, ts)
+        text = LABEL.sub("", USED_MARK.sub("", text)).strip()
+        if text:
+            self.memory.ingest("assistant", text, ts)
         if prompt_tokens:
             self.memory.report_context_used(prompt_tokens)
+        return text
 
     def on_action(self, note: str, ts: float) -> None:
         """AI 自己做了一件事（换头像、发说说等，D35）：作为它自己说过的一句话记进记忆，以后能想起来。"""
@@ -123,6 +175,31 @@ def _archive_note(hits: list) -> str:
         return "对方要你翻以前的记录，档案里没找到相关的。如实告诉对方。"
     found = "\n".join(f"- {h.title}：{h.excerpt}" for h in hits)
     return "对方要你翻以前的记录，档案里找到这些原文（按相关程度排列）：\n" + memory_block(found)
+
+
+def time_block(ts: float, previous_ts: float | None = None) -> str:
+    """现在是什么时候（用户 2026-11-07："让他自己意识到现实时间"）。按本机时区（Docker 里是 TZ=Asia/Shanghai）。
+    离上一条消息超过半小时，再说过了多久，免得隔了几天回来还接着说"刚才"。"""
+    t = time.localtime(ts)
+    when = f"现在是 {t.tm_year} 年 {t.tm_mon} 月 {t.tm_mday} 日，星期{WEEKDAYS[t.tm_wday]}，{_daypart(t.tm_hour)} {t.tm_hour}:{t.tm_min:02d}。"
+    if previous_ts is not None and ts - previous_ts >= GAP_SHOWN:
+        when += f"离上次聊天过了{_gap(ts - previous_ts)}。"
+    return when
+
+
+def _daypart(hour: int) -> str:
+    for end, name in ((5, "凌晨"), (8, "早上"), (11, "上午"), (13, "中午"), (18, "下午"), (24, "晚上")):
+        if hour < end:
+            return name
+    return ""
+
+
+def _gap(seconds: float) -> str:
+    if seconds >= 86400:
+        return f" {seconds / 86400:.0f} 天"
+    if seconds >= 3600:
+        return f" {seconds / 3600:.0f} 个多小时" if seconds % 3600 >= 600 else f" {seconds / 3600:.0f} 个小时"
+    return f" {seconds / 60:.0f} 分钟"
 
 
 def memory_block(*parts: str) -> str:

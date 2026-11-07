@@ -56,8 +56,7 @@ def run(
         memory.scan(now)
         p = responder.on_user_message(text, now)
         reply, used = backend.reply(p.system, p.contexts, p.prompt, p.image_paths)
-        responder.on_reply(reply, clock(), used)
-        out(reply)
+        out(responder.on_reply(reply, clock(), used))  # 〔用到：记N〕标记已删掉
 
 
 def main() -> None:

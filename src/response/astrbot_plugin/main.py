@@ -23,6 +23,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
 # 设置页里可以单独关掉的工具（D35、D40）
+OPTIONAL_TOOLS = {"recall_memory": "memory_search"}  # 工具名 → 设置页的功能开关
 QQ_TOOLS = (
     "qq_find_images",
     "qq_set_avatar",
@@ -112,10 +113,12 @@ class HumanlikePlugin(Star):
             logger.exception("[类人AI] 调用思考模型失败")
             return  # 出错时说什么还没定（待议问题 22），暂时不回
         reply = (resp.completion_text or "").strip()
+        used = resp.usage.input_other + resp.usage.input_cached if resp.usage else None
+        reply = self.responder.on_reply(
+            reply, time.time(), used
+        )  # 取出〔用到：记N〕加固后删掉（待议问题 14）
         if not reply:
             return
-        used = resp.usage.input_other + resp.usage.input_cached if resp.usage else None
-        self.responder.on_reply(reply, time.time(), used)
         yield event.plain_result(reply)
 
     async def _attachments(self, event: AstrMessageEvent) -> list:
@@ -156,6 +159,9 @@ class HumanlikePlugin(Star):
         for name in QQ_TOOLS:  # 设置页关掉的"自己的事"，不交给模型（D40）
             if not config.enabled(name):
                 tools.remove_tool(name)
+        for name, feature in OPTIONAL_TOOLS.items():
+            if not config.enabled(feature):
+                tools.remove_tool(name)
         if not config.enabled("web_search"):
             return tools
         try:
@@ -167,6 +173,15 @@ class HumanlikePlugin(Star):
         except Exception:  # noqa: BLE001  AstrBot 改了内部接口时退回不带搜索，不影响聊天
             logger.exception("[类人AI] 加联网搜索工具失败，这一轮不带搜索")
         return tools
+
+    @filter.llm_tool(name="recall_memory")
+    async def recall_memory(self, event: AstrMessageEvent, query: str):
+        """在自己的记忆里想一想。想不起来、但觉得以前聊过的事时用。只能想起还记得的，已经忘掉的想不起来。
+
+        Args:
+            query(string): 想回忆什么，用几个关键词描述
+        """
+        return self.responder.recall(query, time.time())
 
     # ---------- 小d 自己的事（D35：严格限制频率，可以自己决定） ----------
 

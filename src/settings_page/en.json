@@ -587,6 +587,14 @@
       "label": "Web search",
       "help": "Use AstrBot's built-in web search (D36); source and key are configured in AstrBot."
     },
+    "memory_search": {
+      "label": "Recall on its own",
+      "help": "Let {name} search its memory with a tool (not the archive, D26) when something does not surface by itself."
+    },
+    "time_awareness": {
+      "label": "Knows the current time",
+      "help": "Each turn, tell {name} the current date, weekday and time, and how long since the last chat."
+    },
     "qq_find_images": {
       "label": "Find images autonomously",
       "help": "Let {name} search the web for images (Openverse, Creative Commons) and save them to images/ in the data folder, for avatars and post pictures."
