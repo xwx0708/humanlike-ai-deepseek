@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>记忆 · 三维展示</title>
+<style>
+  /* 三维展示页（截图用，画面上不放任何文字；数据是模拟的）。
+     1：记忆网络——按 src/memory/scanner.py、sweep.py、forgetting.py 的真实规则运行（时间加速）
+     2：方块海洋
+     拖动旋转，滚轮缩放，空格暂停，H 隐藏注释。 */
+  html, body { margin: 0; height: 100%; background: #02070d; overflow: hidden; }
+  canvas { display: block; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  /* 图形旁的注释：按 H 隐藏 */
+  #notes, #leaders { position: fixed; inset: 0; pointer-events: none; }
+  #leaders { width: 100%; height: 100%; }
+  #leaders line { stroke: rgba(200,218,230,.45); stroke-width: 1; }
+  #leaders circle { fill: rgba(220,232,240,.8); }
+  .note { position: absolute; white-space: pre; font: 13px/1.5 "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", sans-serif;
+          color: rgba(214,228,238,.78); letter-spacing: .02em; transform: translateY(-50%); }
+  .note.event { color: #f3f7fa; }
+  .note.month { color: rgba(180,200,215,.5); font-size: 12px; transform: translate(-50%, -50%); }
+  body.clean #notes, body.clean #leaders { display: none; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/addons/" } }
+</script>
+</head>
+<body>
+<svg id="leaders"></svg>
+<div id="notes"></div>
+<script type="module">
+import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// 固定种子：每次打开一样，方便重拍
+let seed = 7310;
+const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+const gauss = () => (rnd() + rnd() + rnd() + rnd() - 2) / 2;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.prepend(renderer.domElement);
+
+const WARM = new THREE.Color('#e9a77e'), COLD = new THREE.Color('#8e98e6'), FOAM = new THREE.Color('#a9dcd8');
+const GOLD = new THREE.Color('#f2d79a'), GRAY = new THREE.Color('#5d6b78'), WHITE = new THREE.Color('#ffffff');
+
+// ---------- 事件注释：某件事发生时在旁边出现几秒 ----------
+const events = [];
+function emit(kind, text, pos) {
+  if (events.some(e => e.kind === kind && e.age < 2.2)) return;    // 同一类不要叠在一起
+  events.push({ kind, text, pos: pos.clone(), age: 0 });
+}
+
+// ---------- 相机：自动慢转，可拖动、滚轮缩放 ----------
+function makeOrbit(dist, elev, az = 0.6) {
+  const o = { az, el: elev, dist, drag: null, idle: 0 };
+  const el = renderer.domElement;
+  el.addEventListener('pointerdown', e => { o.drag = [e.clientX, e.clientY]; el.setPointerCapture(e.pointerId); });
+  el.addEventListener('pointermove', e => {
+    if (!o.drag || scenes[current].orbit !== o) return;
+    o.az -= (e.clientX - o.drag[0]) * 0.005; o.el = Math.max(-0.2, Math.min(1.4, o.el + (e.clientY - o.drag[1]) * 0.004));
+    o.drag = [e.clientX, e.clientY]; o.idle = 0;
+  });
+  el.addEventListener('pointerup', () => { o.drag = null; });
+  el.addEventListener('wheel', e => { if (scenes[current].orbit === o) { o.dist *= Math.exp(e.deltaY * 0.001); o.idle = 0; } }, { passive: true });
+  return o;
+}
+function applyOrbit(o, cam, target, dt, spin) {
+  o.idle += dt;
+  if (!o.drag && o.idle > 2) o.az += dt * spin;
+  cam.position.set(target.x + o.dist * Math.cos(o.el) * Math.sin(o.az), target.y + o.dist * Math.sin(o.el), target.z + o.dist * Math.cos(o.el) * Math.cos(o.az));
+  cam.lookAt(target);
+}
+
+// ======================================================================
+// 场景一：记忆网络。规则和数值取自项目代码：
+//   遗忘曲线 forgetting.py：半衰期 = 7 天 × 10^相对唤醒度 × 5^重要性；强度 = 0.5^(经过天数/半衰期)；遗忘线 0.1
+//   扫描器 scanner.py：按月份分区（常驻的不参加），指针每分钟扫一个分区；
+//     每分钟浮现强度 p = 0.02 × sigmoid((强度 + 启动加成 − 0.6) / 温度)，温度 0.1（专注）～0.3（闲聊）；
+//     负面记忆话题无关时打折（最多 ×0.4）；距上次被扫过 m 分钟，中的概率 1 − e^(−p·m)；
+//     浮现区 4 格，新的挤掉旧的；仅仅浮现不加固
+//   回忆加固 forgetting.recall：被真正用到时强度回满，半衰期 × (1 + 1 × (1 − 用前强度))
+//   批量遗忘 sweep.py：跌破遗忘线的不再参加扫描，攒满 20 个：随机留 1 个只剩关键词、重新开始，其余 19 个进档案
+// 演示加速：指针每 1.8 秒走一格（真实是每分钟一格），每走一格记忆时间过 0.5 天。
+// ======================================================================
+function buildNetwork() {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#02070d');
+  const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 1, 80000);
+
+  const HEIGHT = 2000, RIM = 2800, INNER = 520, MONTHS = 12, LINE = 0.1;
+  const SECTOR = (Math.PI * 2) / MONTHS;
+  const K = { threshold: 0.6, tempFocus: 0.1, tempDiffuse: 0.3, rate: 0.02, primingMax: 0.5, negDamp: 0.6, buffer: 4, batch: 20, reinforce: 1 };
+  const TICK = 1.8, DAYS_PER_TICK = 0.5;
+  const halfLife = (ra, imp) => 7 * Math.pow(10, ra) * Math.pow(5, imp);
+  const sectorAngle = m => (m + 0.5) * SECTOR;
+
+  // ---------- 数据 ----------
+  const MAX = 4000, MAXL = 8000;
+  const nodes = [], links = [], threads = [];
+  let archivedCount = 0;
+
+  // 位置只编码结构：角度 = 时间（一圈 12 个月），半径 = 所属事件线的环线，高度 = 强度 S；
+  // 大小 = 重要性，颜色 = 效价。没有随机摆放。
+  function addNode(thread, t, opts = {}) {
+    if (nodes.length >= MAX) return null;
+    const resident = thread.resident;
+    const ra = Math.min(1, Math.max(0, thread.ra + gauss() * 0.12));
+    const imp = Math.min(1, Math.max(0, thread.imp + gauss() * 0.08));
+    const n = {
+      id: nodes.length, thread, t, month: Math.min(MONTHS - 1, Math.floor(t)), resident, ra, imp,
+      hl: halfLife(ra, imp), age: opts.age ?? 0, s: 1, keyword: false,
+      state: 'active',                     // active / waiting / archived
+      ang: (t / MONTHS) * Math.PI * 2, rad: thread.lane,
+      pos: new THREE.Vector3(), target: new THREE.Vector3(), scan: 0, flash: 0, size: 14 + imp * 46,
+    };
+    n.s = resident ? 1 : Math.pow(0.5, n.age / n.hl);
+    placeTarget(n); n.pos.copy(n.target);
+    if (thread.nodes.length && links.length < MAXL) links.push([thread.nodes[thread.nodes.length - 1], n]);
+    thread.nodes.push(n); nodes.push(n);
+    return n;
+  }
+  function placeTarget(n) {
+    if (n.state === 'waiting') return;     // 等待槽里的位置另算
+    n.target.set(Math.cos(n.ang) * n.rad, n.s * HEIGHT, Math.sin(n.ang) * n.rad);
+  }
+
+  // 事件线：跨几个月，越重要、越动情的事忘得越慢
+  for (let t = 0; t < 70; t++) {
+    const resident = t < 8;
+    const kind = resident ? 'gold' : rnd() < 0.3 ? 'warm' : rnd() < 0.42 ? 'cold' : 'foam';
+    const v = kind === 'warm' ? 0.5 : kind === 'cold' ? -0.55 : 0;
+    const ra = kind === 'foam' ? rnd() * 0.35 : 0.25 + rnd() * 0.6;
+    const imp = resident ? 0.6 + rnd() * 0.4 : Math.pow(rnd(), 1.4) * 0.9;
+    const m0 = rnd() * (MONTHS - 0.5), span = resident ? 3 + rnd() * 8 : 0.3 + Math.pow(rnd(), 1.5) * 5;
+    threads.push({ kind, v, ra, imp, resident, nodes: [], prim: 0, t0: m0, t1: Math.min(MONTHS - 0.05, m0 + span),
+                   count: resident ? 14 + Math.floor(rnd() * 10) : 5 + Math.floor(rnd() * 26) });
+  }
+  // 环线：常驻在最内圈，其余越重要越靠内
+  const order = [...threads].sort((a, b) => (b.resident - a.resident) || (b.imp - a.imp));
+  order.forEach((th, i) => { th.lane = INNER + 110 + i * ((RIM - INNER - 190) / (order.length - 1)); });
+  for (const th of threads) {
+    const ts = Array.from({ length: th.count }, () => th.t0 + rnd() * (th.t1 - th.t0)).sort((a, b) => a - b);
+    for (const tt of ts) {
+      // 记忆时间（D21：对话中流速 10 倍，不聊天几乎停住）：按每天聊一个多小时算，一个月约 15 天记忆时间
+      const age = (MONTHS - tt) * 15;
+      const sNow = Math.pow(0.5, age / halfLife(th.ra, th.imp));
+      if (!th.resident && sNow < LINE) { archivedCount++; continue; }   // 早就忘了：在档案里
+      addNode(th, tt, { age });
+    }
+  }
+
+  const colorOf = n => (n.state !== 'active' ? GRAY : n.resident ? GOLD : n.thread.kind === 'warm' ? WARM : n.thread.kind === 'cold' ? COLD : FOAM);
+
+  // ---------- 图形：点 ----------
+  const pg = new THREE.BufferGeometry();
+  const pos = new Float32Array(MAX * 3), col = new Float32Array(MAX * 3), size = new Float32Array(MAX), alpha = new Float32Array(MAX);
+  pg.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+  pg.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+  pg.setAttribute('size', new THREE.BufferAttribute(size, 1).setUsage(THREE.DynamicDrawUsage));
+  pg.setAttribute('alpha', new THREE.BufferAttribute(alpha, 1).setUsage(THREE.DynamicDrawUsage));
+  const pointMat = new THREE.ShaderMaterial({
+    uniforms: { uScale: { value: renderer.getPixelRatio() * innerHeight / 2 } },
+    vertexShader: `
+      attribute float size; attribute float alpha; varying vec3 vColor; varying float vAlpha;
+      uniform float uScale;
+      void main() {
+        vColor = color; vAlpha = alpha;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = size * uScale / -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      varying vec3 vColor; varying float vAlpha;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        float core = smoothstep(0.5, 0.36, d);
+        float halo = smoothstep(0.5, 0.0, d) * 0.35;
+        float a = max(core, halo);
+        if (a < 0.01) discard;
+        gl_FragColor = vec4(vColor, a * vAlpha);
+      }`,
+    vertexColors: true, transparent: true, depthWrite: false,
+  });
+  scene.add(new THREE.Points(pg, pointMat));
+
+  // ---------- 图形：事件线 ----------
+  const lg = new THREE.BufferGeometry();
+  const lpos = new Float32Array(MAXL * 6), lcol = new Float32Array(MAXL * 6);
+  lg.setAttribute('position', new THREE.BufferAttribute(lpos, 3).setUsage(THREE.DynamicDrawUsage));
+  lg.setAttribute('color', new THREE.BufferAttribute(lcol, 3).setUsage(THREE.DynamicDrawUsage));
+  scene.add(new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })));
+
+  // ---------- 图形：表盘、遗忘线、扫描指针 ----------
+  const thin = (pts, color, opacity) => {
+    const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color, transparent: true, opacity }));
+    scene.add(l); return l;
+  };
+  const circle = (r, y, seg = 160) => Array.from({ length: seg + 1 }, (_, i) => new THREE.Vector3(Math.cos(i / seg * Math.PI * 2) * r, y, Math.sin(i / seg * Math.PI * 2) * r));
+  thin(circle(RIM, 0), '#6f8fa6', 0.35);
+  thin(circle(INNER, 0), '#6f8fa6', 0.22);
+  thin(circle(RIM, LINE * HEIGHT), '#b7c7d3', 0.32);             // 遗忘线
+  // 强度刻度：圆盘边上一根竖线，刻 0.1、0.5、1.0
+  const AXIS_A = Math.PI * 0.5;
+  const axisAt = y => new THREE.Vector3(Math.cos(AXIS_A) * (RIM + 90), y, Math.sin(AXIS_A) * (RIM + 90));
+  thin([axisAt(0), axisAt(HEIGHT)], '#9fb6c6', 0.35);
+  for (const k of [0.1, 0.5, 1]) thin([axisAt(k * HEIGHT), axisAt(k * HEIGHT).add(new THREE.Vector3(60, 0, 0))], '#9fb6c6', 0.5);
+  for (let m = 0; m < MONTHS; m++) {                              // 分区的分界
+    const a = m * SECTOR;
+    thin([new THREE.Vector3(Math.cos(a) * INNER, 0, Math.sin(a) * INNER), new THREE.Vector3(Math.cos(a) * RIM, 0, Math.sin(a) * RIM)], '#6f8fa6', 0.22);
+  }
+  const wedge = new THREE.Mesh(new THREE.RingGeometry(INNER, RIM, 64, 1, 0, SECTOR), new THREE.MeshBasicMaterial({ color: '#7fc4ff', transparent: true, opacity: 0.035, side: THREE.DoubleSide, depthWrite: false }));
+  wedge.rotation.x = Math.PI / 2;
+  scene.add(wedge);
+  const pointer = thin([new THREE.Vector3(INNER, 0, 0), new THREE.Vector3(RIM + 140, 0, 0)], '#9fd3ff', 0.9);
+
+  // 浮现区：中心上方 4 格
+  const SLOT_Y = HEIGHT + 700;
+  const slotPos = i => new THREE.Vector3((i - 1.5) * 260, SLOT_Y, 0);
+  for (let i = 0; i < K.buffer; i++) {
+    const c = slotPos(i), h = 70;
+    thin([[-h, -h], [h, -h], [h, h], [-h, h], [-h, -h]].map(([x, y]) => new THREE.Vector3(c.x + x, c.y + y, 0)), '#9fb6c6', 0.55);
+  }
+  thin([new THREE.Vector3(0, HEIGHT + 260, 0), new THREE.Vector3(0, SLOT_Y - 120, 0)], '#9fb6c6', 0.18);
+
+  // 等待槽：跌破遗忘线的攒在这里，攒满 20 个处理一批
+  const RACK_A = -Math.PI / 2, RACK_R = RIM + 380;
+  const rackPos = i => { const a = RACK_A + (i - 9.5) * (90 / RACK_R); return new THREE.Vector3(Math.cos(a) * RACK_R, 6, Math.sin(a) * RACK_R); };
+  for (let i = 0; i < K.batch; i++) thin(circle(26, 0, 24).map(p => p.add(rackPos(i)).setY(2)), '#9fb6c6', 0.45);
+
+  // 档案：外圈、地面以下
+  const archive = [];
+  const addArchiveDot = () => { const a = rnd() * Math.PI * 2, r = RIM + 900 + rnd() * 1200; archive.push(new THREE.Vector3(Math.cos(a) * r, -200 - rnd() * 700, Math.sin(a) * r)); };
+  for (let i = 0; i < archivedCount; i++) addArchiveDot();
+  const ag = new THREE.BufferGeometry();
+  const apos = new Float32Array(20000 * 3);
+  ag.setAttribute('position', new THREE.BufferAttribute(apos, 3).setUsage(THREE.DynamicDrawUsage));
+  scene.add(new THREE.Points(ag, new THREE.PointsMaterial({ color: '#4c6275', size: 16, transparent: true, opacity: 0.45, depthWrite: false })));
+
+  // 飞行中的：浮现（点 → 浮现格）、用到（浮现格 → 点）、归档（等待槽 → 档案）
+  const flyers = [];
+  const fg = new THREE.BufferGeometry();
+  const fpos = new Float32Array(64 * 6), fcol = new Float32Array(64 * 6);
+  fg.setAttribute('position', new THREE.BufferAttribute(fpos, 3).setUsage(THREE.DynamicDrawUsage));
+  fg.setAttribute('color', new THREE.BufferAttribute(fcol, 3).setUsage(THREE.DynamicDrawUsage));
+  scene.add(new THREE.LineSegments(fg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false })));
+
+  // ---------- 运行 ----------
+  const buffer = [];          // 浮现区里的节点（最多 4 个）
+  const waiting = [];         // 等待槽
+  const lastScan = new Map(); // 片段 → 上次被扫的第几格
+  let tickClock = 0, tickNo = 0, cursor = 0, focus = 0.6, topic = null;
+  let pointerAngle = sectorAngle(0), pointerTarget = pointerAngle;
+
+  const temperature = () => K.tempDiffuse + (K.tempFocus - K.tempDiffuse) * focus;
+  function probability(n) {
+    const prim = n.thread.prim;
+    const x = (n.s + prim - K.threshold) / temperature();
+    let p = 1 / (1 + Math.exp(-Math.max(-50, Math.min(50, x))));
+    if (n.thread.v < 0) {
+      const related = Math.min(1, prim / (0.5 * K.primingMax));
+      p *= 1 - K.negDamp * (-n.thread.v) * (1 - related);
+    }
+    return K.rate * p;
+  }
+  function setTopic() {
+    for (const th of threads) th.prim = 0;
+    const live = threads.filter(th => !th.resident && th.nodes.some(n => n.state === 'active'));
+    topic = live[Math.floor(rnd() * live.length)];
+    topic.prim = K.primingMax;
+    for (let k = 0; k < 3; k++) { const th = live[Math.floor(rnd() * live.length)]; if (th !== topic) th.prim = 0.2; }  // 相关的事：部分加成
+    focus = rnd();
+  }
+  setTopic();
+
+  function fly(from, to, color, done) { flyers.push({ from: from.clone(), to, color, t: 0, done }); }
+
+  function scanTick() {
+    tickNo++;
+    // 记忆时间流逝：每个片段按自己的半衰期变淡
+    for (const n of nodes) {
+      if (n.state !== 'active' || n.resident) continue;
+      n.age += DAYS_PER_TICK;
+      n.s = Math.pow(0.5, n.age / n.hl);
+      if (n.s < LINE) {                              // 跌破遗忘线：不再参加扫描，进等待槽
+        n.state = 'waiting';
+        const bi = buffer.indexOf(n); if (bi >= 0) buffer.splice(bi, 1);
+        waiting.push(n);
+      }
+      placeTarget(n);
+    }
+    waiting.forEach((n, i) => n.target.copy(rackPos(Math.min(i, K.batch - 1))));
+
+    // 指针走到下一个有片段的分区
+    const parts = [];
+    for (let m = 0; m < MONTHS; m++) if (nodes.some(n => n.month === m && n.state === 'active' && !n.resident)) parts.push(m);
+    if (parts.length) {
+      const m = parts[cursor % parts.length]; cursor++;
+      pointerTarget = sectorAngle(m) - SECTOR / 2;
+      while (pointerTarget < pointerAngle - 1e-6) pointerTarget += Math.PI * 2;
+      for (const n of nodes) {
+        if (n.month !== m || n.state !== 'active' || n.resident) continue;
+        n.scan = 1;
+        const minutes = tickNo - (lastScan.get(n) ?? tickNo - 1);
+        lastScan.set(n, tickNo);
+        const hit = 1 - Math.exp(-probability(n) * minutes);
+        if (rnd() < hit && !buffer.includes(n)) {
+          n.flash = 1;
+          emit('hit', `采样命中 → 进入浮现区  P = ${(hit * 100).toFixed(1)}%`, n.pos);
+          buffer.push(n);
+          if (buffer.length > K.buffer) buffer.shift();          // 新的挤掉最旧的
+        }
+      }
+    }
+    // 浮现区里的点：飞到格子里（位置随顺序更新）
+    buffer.forEach((n, i) => { if (!n.inSlot) { n.inSlot = true; fly(n.pos, slotPos(i), WHITE); } });
+
+    // 偶尔"被用到"：回复里真的提起了浮现区里的一条（优先和当前话题有关的）
+    if (buffer.length && rnd() < 0.22) {
+      const cand = [...buffer].sort((a, b) => b.thread.prim - a.thread.prim)[0];
+      const gain = 1 + K.reinforce * (1 - cand.s);
+      emit('use', `提取巩固：S → 1，H × ${gain.toFixed(2)}（= 1 + (1 − S)）`, cand.target.clone().setY(HEIGHT));
+      cand.hl *= gain; cand.age = 0; cand.s = 1; cand.flash = 1.4;
+      fly(slotPos(buffer.indexOf(cand)), cand.target.clone().setY(HEIGHT), GOLD);
+      placeTarget(cand);
+    }
+
+    // 攒满一批：随机留 1 个只剩关键词、重新开始，其余进档案
+    if (waiting.length >= K.batch) {
+      const batch = waiting.splice(0, K.batch);
+      const keep = batch[Math.floor(rnd() * batch.length)];
+      emit('sweep', '批处理：19 → 档案；1（随机 5%）→ 关键词抽象，重置衰减', rackPos(10));
+      for (const n of batch) {
+        if (n === keep) {
+          n.state = 'active'; n.keyword = true; n.age = 0; n.s = 1; n.hl = halfLife(n.ra, n.imp); n.size *= 0.6;
+          placeTarget(n);
+        } else {
+          n.state = 'archived';
+          const a = rnd() * Math.PI * 2, r = RIM + 900 + rnd() * 1200;
+          const dest = new THREE.Vector3(Math.cos(a) * r, -200 - rnd() * 700, Math.sin(a) * r);
+          fly(n.pos, dest, GRAY, () => { archive.push(dest); });
+        }
+      }
+      waiting.forEach((n, i) => n.target.copy(rackPos(i)));
+    }
+
+    // 新的对话整理出新片段，挂到事件线上（落在最近的月份）
+    if (tickNo % 9 === 0) {
+      const th = rnd() < 0.7 && topic ? topic : threads[8 + Math.floor(rnd() * (threads.length - 8))];
+      const k = 1 + Math.floor(rnd() * 3);
+      for (let i = 0; i < k; i++) { const n = addNode(th, MONTHS - 0.02 - rnd() * 0.04, { age: 0 }); if (n) { n.pos.y = HEIGHT + 300; n.flash = 0.8; if (i === 0) emit('new', '编码：新片段写入，链接至事件线', n.target); } }
+    }
+    if (tickNo % 24 === 0) setTopic();               // 换话题：启动加成和温度跟着变
+  }
+
+  const orbit = makeOrbit(7600, 0.34, 0.9);
+  const target = new THREE.Vector3(0, 900, 0);
+  const tmp = new THREE.Color();
+
+  function update(dt) {
+    tickClock += dt;
+    if (tickClock >= TICK) { tickClock -= TICK; scanTick(); }
+    // 指针转到当前分区
+    pointerAngle += (pointerTarget - pointerAngle) * Math.min(1, dt * 5);
+    pointer.rotation.y = -(pointerAngle + SECTOR / 2);
+    wedge.rotation.z = pointerAngle;
+    // 点
+    nodes.forEach((n, i) => {
+      if (n.state === 'archived') { alpha[i] = 0; return; }
+      n.pos.lerp(n.target, Math.min(1, dt * 2.2));
+      pos[i * 3] = n.pos.x; pos[i * 3 + 1] = n.pos.y; pos[i * 3 + 2] = n.pos.z;
+      n.scan = Math.max(0, n.scan - dt * 1.1);
+      n.flash = Math.max(0, n.flash - dt * 0.6);
+      tmp.copy(colorOf(n)).lerp(WHITE, Math.min(1, n.flash * 0.8));
+      col[i * 3] = tmp.r; col[i * 3 + 1] = tmp.g; col[i * 3 + 2] = tmp.b;
+      const base = n.state === 'waiting' ? 0.45 : 0.25 + 0.75 * n.s;
+      alpha[i] = Math.min(1, base + n.scan * 0.35 + n.flash);
+      size[i] = n.size * (n.keyword ? 0.8 : 1) * (1 + n.flash * 0.8 + n.scan * 0.15);
+    });
+    pg.setDrawRange(0, nodes.length);
+    for (const a of ['position', 'color', 'size', 'alpha']) pg.attributes[a].needsUpdate = true;
+    // 事件线：两端都还在记忆里才画；当前话题的线亮一些
+    links.forEach(([a, b], i) => {
+      const live = a.state === 'active' && b.state === 'active';
+      lpos.set([a.pos.x, a.pos.y, a.pos.z, b.pos.x, b.pos.y, b.pos.z], i * 6);
+      const c = colorOf(a);
+      const k = live ? (0.03 + 0.08 * Math.min(a.s, b.s) + (a.thread.prim >= K.primingMax ? 0.2 : 0)) : 0;
+      for (const o of [0, 3]) { lcol[i * 6 + o] = c.r * k; lcol[i * 6 + o + 1] = c.g * k; lcol[i * 6 + o + 2] = c.b * k; }
+    });
+    lg.setDrawRange(0, links.length * 2);
+    lg.attributes.position.needsUpdate = lg.attributes.color.needsUpdate = true;
+    // 档案
+    archive.forEach((p, i) => apos.set([p.x, p.y, p.z], i * 3));
+    ag.setDrawRange(0, archive.length); ag.attributes.position.needsUpdate = true;
+    // 飞行轨迹
+    let fi = 0;
+    for (let i = flyers.length - 1; i >= 0; i--) {
+      const f = flyers[i];
+      f.t += dt / 1.1;
+      if (f.t >= 1) { f.done?.(); flyers.splice(i, 1); continue; }
+      const head = f.from.clone().lerp(f.to, f.t), tail = f.from.clone().lerp(f.to, Math.max(0, f.t - 0.25));
+      head.y += Math.sin(f.t * Math.PI) * 320; tail.y += Math.sin(Math.max(0, f.t - 0.25) * Math.PI) * 320;
+      if (fi < 64) {
+        fpos.set([tail.x, tail.y, tail.z, head.x, head.y, head.z], fi * 6);
+        const k = 1 - f.t * 0.6;
+        fcol.set([f.color.r * k * 0.2, f.color.g * k * 0.2, f.color.b * k * 0.2, f.color.r * k, f.color.g * k, f.color.b * k], fi * 6);
+        fi++;
+      }
+    }
+    fg.setDrawRange(0, fi * 2); fg.attributes.position.needsUpdate = fg.attributes.color.needsUpdate = true;
+    // 浮现区里的点停在格子上方
+    buffer.forEach((n, i) => { if (n.inSlot) n.slotMark = slotPos(i); });
+    nodes.forEach(n => { if (!buffer.includes(n)) n.inSlot = false; });
+    applyOrbit(orbit, camera, target, dt, 0.035);
+  }
+
+  // 浮现区里的副本：画在格子里的小点
+  const sg = new THREE.BufferGeometry();
+  const spos = new Float32Array(4 * 3), scol = new Float32Array(4 * 3);
+  sg.setAttribute('position', new THREE.BufferAttribute(spos, 3)); sg.setAttribute('color', new THREE.BufferAttribute(scol, 3));
+  scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ size: 60, vertexColors: true, transparent: true, depthWrite: false })));
+  const baseUpdate = update;
+  function updateWithSlots(dt) {
+    baseUpdate(dt);
+    buffer.forEach((n, i) => {
+      const p = slotPos(i); spos.set([p.x, p.y, p.z], i * 3);
+      const c = colorOf(n); scol.set([c.r, c.g, c.b], i * 3);
+    });
+    sg.setDrawRange(0, buffer.length); sg.attributes.position.needsUpdate = sg.attributes.color.needsUpdate = true;
+  }
+
+  // 先跑一会儿：打开就是"运行中"的状态
+  for (let i = 0; i < 40; i++) scanTick();
+  for (const n of nodes) n.pos.copy(n.target);
+
+  const monthName = m => { const d = new Date(2025, 10 + m, 1); return `${d.getFullYear()}.${d.getMonth() + 1}`; };
+  const notes = [
+    { at: () => { const th = order[0]; const n = th.nodes[th.nodes.length - 1]; return n ? n.pos : null; },
+      text: '常驻栏 Resident（最内圈）\n免竞争项 + 20 席加权竞争；S 恒为 1，不参与扫描', dx: 46, dy: -40 },
+    { at: () => new THREE.Vector3(Math.cos(SECTOR * 3.5) * (RIM + 120), 0, Math.sin(SECTOR * 3.5) * (RIM + 120)),
+      text: '角度 = 时间：一圈 12 个月，按月分区', dx: 30, dy: 40 },
+    { at: () => { const th = order[Math.floor(order.length * 0.45)]; const a = Math.PI * 0.82; return new THREE.Vector3(Math.cos(a) * th.lane, 0, Math.sin(a) * th.lane); },
+      text: '半径 = 事件线：同一环线上是同一件事，弧长即持续时间\n越靠内越重要', dx: -40, dy: 46 },
+    { at: () => { const live = nodes.filter(n => n.state === 'active' && !n.resident); const big = live.reduce((a, b) => (b.imp > (a?.imp ?? -1) ? b : a), null); return big ? big.pos : null; },
+      text: '点的大小 = 重要性 i；颜色 = 效价（暖 / 冷 / 中性）', dx: 34, dy: -30 },
+    { at: () => new THREE.Vector3(1.5 * 260 + 90, SLOT_Y, 0), text: '浮现区 Surface buffer\n容量 4，FIFO 置换；浮现不触发巩固', dx: 40, dy: -30 },
+    { at: () => { const a = pointerAngle + SECTOR / 2; return new THREE.Vector3(Math.cos(a) * (RIM + 140), 0, Math.sin(a) * (RIM + 140)); },
+      text: () => `扫描器：按月分区轮询，每步一区，T = ${temperature().toFixed(2)}\n逐片段伯努利采样  P = 1 − e^(−p·Δt)，p = 0.02·σ((S + π − 0.6) / T)`, dx: 30, dy: 34 },
+    { at: () => axisAt(HEIGHT), text: 'S = 1.0：编码或巩固时刻', dx: 34, dy: -12 },
+    { at: () => axisAt(0.55 * HEIGHT), text: '记忆强度 S(t) = 0.5^(Δt / H)\nH = 7 d · 10^a · 5^i（a 相对唤醒度，i 重要性）', dx: 34, dy: 0 },
+    { at: () => axisAt(LINE * HEIGHT), text: '遗忘阈值 S = 0.1：退出采样', dx: 34, dy: 10 },
+    { at: () => rackPos(19), text: '待清理队列：累计 20 项触发批处理', dx: 30, dy: 30 },
+    { at: () => { const a = RACK_A + 0.9, r = RIM + 1500; return new THREE.Vector3(Math.cos(a) * r, -550, Math.sin(a) * r); },
+      text: '档案 Archive：冷存储，原文保留，可检索', dx: 30, dy: 24 },
+    { at: () => { const live = topic && topic.nodes.filter(n => n.state === 'active'); return live && live.length ? live[live.length - 1].pos : null; },
+      text: '启动加成 π = 0.5：当前话题所属事件线', dx: 36, dy: -36 },
+  ];
+  for (let m = 0; m < MONTHS; m++) {
+    const a = sectorAngle(m);
+    notes.push({ at: () => new THREE.Vector3(Math.cos(a) * (RIM + 190), 0, Math.sin(a) * (RIM + 190)), text: monthName(m), month: true });
+  }
+
+  return { scene, camera, notes, update: updateWithSlots, orbit, bloom: [0.35, 0.3, 0.55], onResize: () => (pointMat.uniforms.uScale.value = renderer.getPixelRatio() * innerHeight / 2) };
+}
+
+// ======================================================================
+// 场景二：方块海洋
+// ======================================================================
+function buildBlocks() {
+  const scene = new THREE.Scene();
+  const BG = new THREE.Color('#030a12');
+  scene.background = BG;
+  scene.fog = new THREE.FogExp2(BG, 0.012);
+  const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.5, 2000);
+
+  const NX = 190, NZ = 120, SP = 1.08;
+  const COUNT = NX * NZ;
+  const geo = new THREE.BoxGeometry(0.92, 1, 0.92);
+  geo.translate(0, 0.5, 0);
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.15 });
+  const mesh = new THREE.InstancedMesh(geo, mat, COUNT);
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(COUNT * 3), 3);
+  mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  scene.add(mesh);
+
+  scene.add(new THREE.HemisphereLight('#9fd6ff', '#02060b', 1.1));
+  const sun = new THREE.DirectionalLight('#cfefff', 1.6); sun.position.set(-60, 120, 40); scene.add(sun);
+
+  const mems = [];
+  for (let i = 0; i < 70; i++) mems.push({ x: rnd() * NX, z: rnd() * NZ, s: rnd() * 0.7, r: 2.2 + rnd() * 3.5, kind: rnd() < 0.5 ? 'warm' : rnd() < 0.5 ? 'cold' : 'foam', hl: 6 + rnd() * 10, resident: false });
+  for (let i = 0; i < 7; i++) mems.push({ x: 20 + rnd() * (NX - 40), z: 15 + rnd() * (NZ - 30), s: 1, r: 2.1, kind: 'gold', hl: 1e9, resident: true });
+
+  const dummy = new THREE.Object3D();
+  const peakGrid = new Float32Array(COUNT), kindGrid = new Array(COUNT);
+  const DEEP = new THREE.Color('#061a2e'), MID = new THREE.Color('#1c7fa3'), TOP = new THREE.Color('#d6fbf8');
+  const c = new THREE.Color(), e = new THREE.Color();
+  const orbit = makeOrbit(108, 0.3, -0.75);
+  const target = new THREE.Vector3(0, 2, 0);
+  let nextRecall = 0.5, t = 0;
+
+  function update(dt) {
+    t += dt;
+    nextRecall -= dt;
+    if (nextRecall < 0) {
+      const m = mems[Math.floor(rnd() * 70)];
+      m.s = 1; m.hl *= 1.25;
+      nextRecall = 0.9 + rnd() * 1.4;
+    }
+    for (const m of mems) if (!m.resident) m.s *= Math.pow(0.5, dt / m.hl);
+    peakGrid.fill(0);
+    for (const m of mems) {
+      const amp = (m.resident ? 17 : 13) * m.s, rr = m.r * m.r;
+      const x0 = Math.max(0, Math.floor(m.x - 12)), x1 = Math.min(NX - 1, Math.ceil(m.x + 12));
+      const z0 = Math.max(0, Math.floor(m.z - 12)), z1 = Math.min(NZ - 1, Math.ceil(m.z + 12));
+      for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) {
+        const dx = x - m.x, dz = z - m.z, v = amp * Math.exp(-(dx * dx + dz * dz) / rr);
+        const j = x * NZ + z;
+        if (v > peakGrid[j]) { peakGrid[j] = v; kindGrid[j] = m.kind; }
+      }
+    }
+    let i = 0;
+    for (let x = 0; x < NX; x++) {
+      for (let z = 0; z < NZ; z++, i++) {
+        let h = 2.6
+          + 2.0 * Math.sin(x * 0.085 + t * 0.55) * Math.cos(z * 0.07 - t * 0.38)
+          + 1.3 * Math.sin((x + z) * 0.05 + t * 0.8)
+          + 0.45 * Math.sin(x * 0.37 - z * 0.29 + t * 1.3);
+        h = Math.max(0.25, h);
+        const peak = peakGrid[i], kind = kindGrid[i];
+        h += peak;
+        dummy.position.set((x - NX / 2) * SP, 0, (z - NZ / 2) * SP);
+        dummy.scale.set(1, h, 1);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+        const k = Math.min(1, h / 6.5);
+        c.copy(DEEP).lerp(MID, Math.min(1, k * 1.4)).lerp(TOP, Math.max(0, k - 0.55) * 1.6);
+        if (peak > 1.2) {
+          e.copy(kind === 'gold' ? GOLD : kind === 'warm' ? WARM : kind === 'cold' ? COLD : FOAM);
+          c.lerp(e, Math.min(1, peak / 8)).multiplyScalar(1 + Math.min(1.8, peak / 7));
+        }
+        mesh.instanceColor.setXYZ(i, c.r, c.g, c.b);
+      }
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.instanceColor.needsUpdate = true;
+    applyOrbit(orbit, camera, target, dt, 0.03);
+  }
+  return { scene, camera, update, orbit, bloom: [0.75, 0.5, 0.62] };
+}
+
+// ---------- 合成与切换 ----------
+const scenes = [buildNetwork(), buildBlocks()];
+let current = 0, paused = false;
+const composer = new EffectComposer(renderer);
+const renderPass = new RenderPass(scenes[0].scene, scenes[0].camera);
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 1, 0.5, 0.2);
+composer.addPass(renderPass); composer.addPass(bloom); composer.addPass(new OutputPass());
+
+function show(i) {
+  current = i;
+  renderPass.scene = scenes[i].scene; renderPass.camera = scenes[i].camera;
+  [bloom.strength, bloom.radius, bloom.threshold] = scenes[i].bloom;
+}
+show(0);
+
+addEventListener('keydown', e => {
+  if (e.key === '1' || e.key === '2') show(+e.key - 1);
+  else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') show(1 - current);
+  else if (e.key === ' ') { paused = !paused; e.preventDefault(); }
+  else if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('clean');
+});
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight); composer.setSize(innerWidth, innerHeight);
+  for (const s of scenes) { s.camera.aspect = innerWidth / innerHeight; s.camera.updateProjectionMatrix(); s.onResize?.(); }
+});
+
+const clock = new THREE.Clock();
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// ---------- 注释的绘制：三维位置投影到屏幕，旁边一条细引线 ----------
+const notesBox = document.getElementById('notes'), leaders = document.getElementById('leaders');
+const SVGNS = 'http://www.w3.org/2000/svg';
+const pool = [];
+function noteEl(i) {
+  if (!pool[i]) {
+    const div = document.createElement('div'); div.className = 'note'; notesBox.appendChild(div);
+    const line = document.createElementNS(SVGNS, 'line'), dot = document.createElementNS(SVGNS, 'circle');
+    dot.setAttribute('r', 2.2); leaders.append(line, dot);
+    pool[i] = { div, line, dot };
+  }
+  return pool[i];
+}
+const proj = new THREE.Vector3();
+function drawNotes(dt) {
+  const sc = scenes[current];
+  const list = [];
+  if (sc.notes) {
+    for (const n of sc.notes) {
+      const p = n.at();
+      if (p) list.push({ p, text: typeof n.text === 'function' ? n.text() : n.text, dx: n.dx ?? 0, dy: n.dy ?? 0, cls: n.month ? 'month' : '', op: 1 });
+    }
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i]; e.age += dt;
+      if (e.age > 3.6) { events.splice(i, 1); continue; }
+      const op = Math.min(1, e.age * 4) * Math.min(1, (3.6 - e.age) / 0.8);
+      list.push({ p: e.pos, text: e.text, dx: 28, dy: -28, cls: 'event', op });
+    }
+  }
+  list.forEach((n, i) => {
+    const el = noteEl(i);
+    proj.copy(n.p).project(sc.camera);
+    const visible = proj.z < 1 && Math.abs(proj.x) < 1.05 && Math.abs(proj.y) < 1.05;
+    const x = (proj.x + 1) / 2 * innerWidth, y = (1 - proj.y) / 2 * innerHeight;
+    const leader = n.cls !== 'month';
+    el.div.style.display = visible ? '' : 'none';
+    el.line.style.display = el.dot.style.display = visible && leader ? '' : 'none';
+    if (!visible) return;
+    el.div.className = 'note ' + n.cls;
+    if (el.div.textContent !== n.text) el.div.textContent = n.text;
+    el.div.style.opacity = n.op;
+    // 靠右边放不下就翻到左边
+    const w = el.div.offsetWidth;
+    const flip = leader && x + Math.abs(n.dx) + w + 16 > innerWidth;
+    const lx = x + (flip ? -Math.abs(n.dx) : n.dx), ly = y + n.dy;
+    el.div.style.left = (leader ? (flip ? lx - 4 - w : lx + 4) : x) + 'px';
+    el.div.style.top = (leader ? ly : y) + 'px';
+    if (leader) {
+      el.line.setAttribute('x1', x); el.line.setAttribute('y1', y); el.line.setAttribute('x2', lx); el.line.setAttribute('y2', ly);
+      el.line.style.opacity = el.dot.style.opacity = n.op;
+      el.dot.setAttribute('cx', x); el.dot.setAttribute('cy', y);
+    }
+  });
+  for (let i = list.length; i < pool.length; i++) pool[i].div.style.display = pool[i].line.style.display = pool[i].dot.style.display = 'none';
+}
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(0.05, clock.getDelta()) * (reduced ? 0.4 : 1);
+  if (!paused) scenes[current].update(dt);
+  drawNotes(paused ? 0 : dt);
+  composer.render();
+});
+</script>
+</body>
+</html>
