@@ -10,14 +10,19 @@
 - floor、split_at、split_upto 都是暂定旋钮。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from contracts.knobs import knob
 from contracts.memory import ChatTurn
+from memory.budget import DEFAULT_KNOBS as BUDGET
+from memory.budget import truncate
 from memory.clock import MemoryClock, clock_of
 from memory.forgetting import ForgettingKnobs, strength
 from memory.store import MemoryStore
+from memory.tokens import estimate_tokens
 from runtime import config
+
+FRESH_HEADER = "刚才的对话（记得很清楚）："
 
 
 @dataclass(frozen=True)
@@ -89,6 +94,26 @@ def fresh_memories(
     return out
 
 
+def fit_fresh(items: list[FreshMemory], budget: int | None = None) -> list[FreshMemory]:
+    """放进新鲜记忆预算（memory.budget）：从最近一条往前放，越早的越先让出位置；最近一条单独就超出时截短。
+    让出位置的消息不丢，照常整理进概率海，之后可能浮现。"""
+    budget = BUDGET.fresh if budget is None else budget
+    budget -= estimate_tokens(FRESH_HEADER) + 1
+    out, used = [], 0
+    for m in reversed(items):
+        cost = estimate_tokens(m.turn.content) + 4  # 加上"对方："和换行
+        if used + cost > budget:
+            if not out:
+                out.append(
+                    FreshMemory(replace(m.turn, content=truncate(m.turn.content, budget - 4)), m.strength)
+                )
+            break
+        out.append(m)
+        used += cost
+    out.reverse()
+    return out
+
+
 def split_point(
     store: MemoryStore,
     conversation_id: int,
@@ -128,7 +153,7 @@ def fresh_block(items: list[FreshMemory]) -> str:
     """给回应模块放进提示词的一段文字。"""
     if not items:
         return ""
-    lines = ["刚才的对话（记得很清楚）："]
+    lines = [FRESH_HEADER]
     for m in items:
         who = "对方" if m.turn.role == "user" else "我"
         lines.append(f"{who}：{m.turn.content}")

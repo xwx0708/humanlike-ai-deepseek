@@ -9,6 +9,7 @@ services:
       - NAPCAT_UID=${NAPCAT_UID:-1000}
       - NAPCAT_GID=${NAPCAT_GID:-1000}
       - MODE=astrbot # 自动配置反向 WebSocket，连到下面的 astrbot 服务
+      - ACCOUNT=${NAPCAT_ACCOUNT:-} # 小号 QQ 号：重启时用上次扫码留下的登录状态快速登录，不必每次重新扫码
     ports:
       - "127.0.0.1:6099:6099" # NapCat 网页：扫码登录 QQ 小号
     volumes:

@@ -15,9 +15,12 @@ from dataclasses import dataclass
 
 from contracts.knobs import knob
 from contracts.memory import Segment
+from memory.budget import DEFAULT_KNOBS as BUDGET
+from memory.budget import fit_lines
 from memory.clock import MemoryClock, clock_of
 from memory.forgetting import strength
 from memory.store import MemoryStore
+from memory.tokens import estimate_tokens
 from runtime import config
 
 
@@ -137,21 +140,36 @@ def effective_strength(
 
 
 RESIDENT_HEADER = "以下是你一直记得的事。作为背景知道就好，不必刻意提起；只有话题相关时才自然地用上。"
+FACTS_TITLE = "【关于他的事实】"
+THREADS_TITLE = "【一直记得的事】"
 
 
-def resident_block(store: MemoryStore) -> str:
-    """给模型的常驻栏文字：用户画像 + 常驻事件线（标题和一句话摘要）。"""
+def resident_block(store: MemoryStore, budget: int | None = None) -> str:
+    """给模型的常驻栏文字：用户画像 + 常驻事件线（标题和一句话摘要）。
+
+    budget：最多占多少 token（memory.budget，默认取设置里的常驻栏预算）。放不下时画像优先，
+    其次免竞争的事件线，最后竞争得来的；没列出的只注明条数，它们仍然常驻、不遗忘。"""
+    budget = BUDGET.resident if budget is None else budget
     lines = [RESIDENT_HEADER]
-    facts = store.profile(everyone=True)
+    facts = [
+        f"- {'他' if f.person_id is None else store.person(f.person_id).name}：{f.fact}"
+        for f in store.profile(everyone=True)
+    ]
+    exempt = store.exempt_marks()
+    tids = sorted(store.resident_threads(), key=lambda t: t not in exempt)  # 稳定排序：免竞争的在前
+    threads = []
+    for tid in tids:
+        c = store.thread_card(tid)
+        threads.append(f"- [{tid}] {c['title']}：{c['summary']}")
+    left = budget - estimate_tokens(RESIDENT_HEADER) - 1
     if facts:
-        lines.append("【关于他的事实】")
-        for f in facts:
-            who = "他" if f.person_id is None else store.person(f.person_id).name
-            lines.append(f"- {who}：{f.fact}")
-    tids = store.resident_threads()
-    if tids:
-        lines.append("【一直记得的事】")
-        for tid in tids:
-            c = store.thread_card(tid)
-            lines.append(f"- [{tid}] {c['title']}：{c['summary']}")
+        lines.append(FACTS_TITLE)
+        left -= estimate_tokens(FACTS_TITLE) + 1
+        facts = fit_lines(facts, left)
+        lines += facts
+        left -= sum(estimate_tokens(x) + 1 for x in facts)
+    if threads:
+        lines.append(THREADS_TITLE)
+        left -= estimate_tokens(THREADS_TITLE) + 1
+        lines += fit_lines(threads, left)
     return "\n".join(lines)

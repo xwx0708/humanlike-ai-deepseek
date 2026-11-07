@@ -12,7 +12,7 @@ from runtime import config
 # 分区归成几个大项（用户 2026-11-02：栏目太多，合并成大项看着舒服）；没列出的分区按登记顺序排在最后一组
 GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("基础", ("general", "persona", "models", "lifecycle")),
-    ("记忆", ("forgetting", "clock", "scanner", "fresh", "resident", "sweep", "archive")),
+    ("记忆", ("forgetting", "clock", "scanner", "fresh", "resident", "budget", "sweep", "archive")),
     ("整理", ("runner", "merge", "candidates", "boundaries", "profile")),
     ("对话与行动", ("attachments", "action", "features", "keywords")),
 )

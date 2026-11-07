@@ -4,7 +4,8 @@
   但每种动作都有频率上限（暂定，见 LIMITS），超过就拒绝，并告诉模型下次最早什么时候能做。
 - 这里只负责把关（频率、长度、图片来源）和生成要交给 NapCat 的接口名与参数；真正调用由 AstrBot 插件做，
   调用成功后再 record()。这样这一层不依赖 AstrBot，可以单独测试。
-- 图片只能用 data/images/ 里的（暂定）：AI 自己画不了图，用户把候选图片放进这个文件夹。
+- 图片只能用 data/images/ 里的（暂定）：AI 自己画不了图，用户把候选图片放进这个文件夹；
+  也可以自己上网找图下载进来（用户 2026-11-07，见 action.image_finder），找图同样限频。
   以 base64 交给 NapCat，因为 NapCat 在另一个容器里，读不到本项目的文件。
 - 删说说只能删自己用这个工具发的。
 """
@@ -14,6 +15,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from action.image_finder import Found, ImageFinder
 from runtime import config
 from runtime.clock import Clock, SystemClock
 
@@ -25,6 +27,7 @@ NICKNAME = "改昵称"
 SIGNATURE = "改签名"
 POST = "发说说"
 DELETE = "删说说"
+FIND = "找图"
 
 
 @dataclass(frozen=True)
@@ -73,6 +76,7 @@ LIMITS = {
     SIGNATURE: _limit("signature", SIGNATURE, 1, 3.0),
     POST: _limit("post", POST, 1, 1.0),
     DELETE: _limit("delete", DELETE, 2, 1.0),
+    FIND: _limit("find", FIND, 5, 1.0),  # 暂定：一天最多找 5 次，每次最多下 4 张
 }
 MAX_CHARS = {NICKNAME: 20, SIGNATURE: 60, POST: 500}
 MAX_IMAGES = 4  # 一条说说最多配几张图（暂定）
@@ -92,6 +96,11 @@ config.feature("web_search", "联网搜索", "使用 AstrBot 自带的网页搜�
 config.feature("qq_set_avatar", "自主换头像", "允许{name} 自主更换 QQ 头像（图片来自数据文件夹的 images/）。")
 config.feature("qq_set_nickname", "自主改昵称", "允许{name} 自主修改 QQ 昵称。")
 config.feature("qq_set_signature", "自主改签名", "允许{name} 自主修改 QQ 个性签名。")
+config.feature(
+    "qq_find_images",
+    "自主找图",
+    "允许{name} 自己上网找图（Openverse，知识共享许可），下载进数据文件夹的 images/，用来换头像、给说说配图。",
+)
 config.feature("qq_post_moment", "自主发说说", "允许{name} 自主发布 QQ 空间说说。")
 config.feature("qq_delete_moment", "自主删说说", "允许{name} 删除自己发布的说说。")
 
@@ -114,10 +123,12 @@ class QQSelf:
         log_path: Path | None = None,
         images_dir: Path | None = None,
         clock: Clock | None = None,
+        finder: ImageFinder | None = None,
     ):
         self.log_path = Path(log_path or config.data_dir() / "action_log.json")
         self.images_dir = Path(images_dir or config.data_dir() / "images")
         self.clock = clock or SystemClock()
+        self.finder = finder or ImageFinder()
 
     # ---------- 生成调用（先检查，不记录） ----------
 
@@ -157,15 +168,24 @@ class QQSelf:
             DELETE, "delete_qzone_msg", {"tid": tid}, f"我删掉了之前发的说说：{posts[tid]['content']}"
         )
 
+    def find_images(self, query: str) -> list[Found]:
+        """上网找图，下载进图片文件夹（这里直接联网，插件放到别的线程里调）。找到了才算一次。"""
+        query = (query or "").strip()
+        if not query:
+            raise Refused("要说找什么图")
+        self._check_rate(FIND)
+        found = self.finder.find(query, self.images_dir)
+        if found:
+            self._append({"kind": FIND, "ts": self.clock.now(), "query": query})
+        return found
+
     # ---------- 做成以后 ----------
 
     def record(self, call: Call, result: dict | None = None) -> None:
         entry = {"kind": call.kind, "ts": self.clock.now()}
         if call.kind == POST:
             entry |= {"content": call.params["content"], "tid": (result or {}).get("tid")}
-        log = self._log() + [entry]
-        self.log_path.parent.mkdir(parents=True, exist_ok=True)
-        self.log_path.write_text(json.dumps(log, ensure_ascii=False, indent=1), encoding="utf-8")
+        self._append(entry)
 
     def list_images(self) -> list[str]:
         if not self.images_dir.is_dir():
@@ -186,6 +206,11 @@ class QQSelf:
         if not self.log_path.is_file():
             return []
         return json.loads(self.log_path.read_text(encoding="utf-8"))
+
+    def _append(self, entry: dict) -> None:
+        log = self._log() + [entry]
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self.log_path.write_text(json.dumps(log, ensure_ascii=False, indent=1), encoding="utf-8")
 
     def _check_rate(self, kind: str) -> None:
         lim, now = LIMITS[kind], self.clock.now()

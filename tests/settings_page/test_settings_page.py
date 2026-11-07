@@ -10,7 +10,7 @@ from settings_page.server import clean
 FEATURES = {
     "keyword_requests", "persona_reminder", "mid_chat_split", "nightly_merge", "batch_sweep", "read_images",
     "read_files", "web_search", "qq_set_avatar", "qq_set_nickname", "qq_set_signature", "qq_post_moment",
-    "qq_delete_moment",
+    "qq_delete_moment", "qq_find_images",
 }  # fmt: skip
 WORD_LISTS = {"remember", "forget", "archive", "choice_erase", "choice_archive", "choice_cancel"}
 

@@ -17,13 +17,16 @@ from contracts.llm import ChatModel
 from contracts.memory import ArchiveHit, ChatTurn, ForgetTarget, MemoryContext
 from memory.archive import forget_thread, search_archive
 from memory.boundaries import ingest_turn
-from memory.fresh import drop_fresh, fresh_block, fresh_memories
+from memory.budget import DEFAULT_KNOBS as BUDGET
+from memory.budget import fit_lines
+from memory.fresh import drop_fresh, fit_fresh, fresh_block, fresh_memories
 from memory.lifecycle import register, report_context_used
 from memory.profile import take_evocations
 from memory.resident import resident_block
 from memory.runner import TickReport, tick
 from memory.scanner import Scanner, focus_of, search_memory
 from memory.store import DEFAULT_PATH, MemoryStore
+from memory.tokens import estimate_tokens
 from runtime.lifecycle import DEFAULT_PATH as LIFECYCLE_PATH
 from runtime.lifecycle import FAMILIAR, Lifecycle
 
@@ -58,6 +61,7 @@ class DefaultMemoryService:
         self.scanner.set_topic(turn.content)
         self.scanner.set_focus(focus_of(self.store, turn.conversation_id))
         fresh = [m for m in fresh_memories(self.store, ts) if m.turn.id != turn.id]  # 这一条本身单独给
+        fresh = fit_fresh(fresh)  # 上下文预算：让出位置的照常整理，可能浮现，所以去重只按留下的算
         surfaced = drop_fresh(self.store, self.scanner.buffer, fresh)
         return MemoryContext(
             phase,
@@ -114,11 +118,9 @@ def _surfaced_block(items: list, evoked: list[str] = ()) -> str:
     """浮现区：自己冒头的记忆，加上被唤起的旧事实（D16）。"""
     if not items and not evoked:
         return ""
-    lines = [SURFACED_HEADER]
-    for s in items:
-        lines.append(f"- （清晰度 {s.clarity:.1f}）{s.text}")
-    lines += [f"- {e}" for e in evoked]
-    return "\n".join(lines)
+    lines = [f"- （清晰度 {s.clarity:.1f}）{s.text}" for s in items] + [f"- {e}" for e in evoked]
+    budget = BUDGET.surfaced - estimate_tokens(SURFACED_HEADER) - 1  # 上下文预算：放不下的这一轮不给
+    return "\n".join([SURFACED_HEADER, *fit_lines(lines, budget, "（还有 {n} 件事隐约想起，这次顾不上）")])
 
 
 def background_job(

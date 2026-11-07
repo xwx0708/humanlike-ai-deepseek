@@ -23,7 +23,14 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
 # 设置页里可以单独关掉的工具（D35、D40）
-QQ_TOOLS = ("qq_set_avatar", "qq_set_nickname", "qq_set_signature", "qq_post_moment", "qq_delete_moment")
+QQ_TOOLS = (
+    "qq_find_images",
+    "qq_set_avatar",
+    "qq_set_nickname",
+    "qq_set_signature",
+    "qq_post_moment",
+    "qq_delete_moment",
+)
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[3]  # 插件放在项目的 src/response/astrbot_plugin/ 里时
 
@@ -189,12 +196,38 @@ class HumanlikePlugin(Star):
         names = self.qq.list_images()
         return "能用的图片：" + "、".join(names) if names else "图片文件夹里还没有图"
 
-    @filter.llm_tool(name="qq_set_avatar")
-    async def qq_set_avatar(self, event: AstrMessageEvent, image: str):
-        """换自己的 QQ 头像。想换就可以自己决定换，但一周最多一次。
+    @filter.llm_tool(name="qq_find_images")
+    async def qq_find_images(self, event: AstrMessageEvent, query: str):
+        """上网找图，下载到自己的图片文件夹，之后可以用来换头像、给说说配图。图来自知识共享许可的图库。
+        用英文关键词效果更好（例如 "orange cat"）。一天最多找 5 次，每次最多下 4 张。
 
         Args:
-            image(string): 图片文件名，只能用 qq_list_images 列出的
+            query(string): 想找什么样的图，最好用英文关键词
+        """
+        from action import Refused
+
+        try:
+            found = await asyncio.to_thread(self.qq.find_images, query)
+        except Refused as e:
+            return f"没找成：{e}"
+        except Exception as e:  # noqa: BLE001  网络不通等
+            logger.exception("[类人AI] 找图失败")
+            return f"没找成：图库连不上（{type(e).__name__}）"
+        if not found:
+            return f"没找到「{query}」的图，可以换个说法（英文关键词效果更好）再找"
+        self.responder.on_action(f"我上网找了「{query}」的图，存了 {len(found)} 张", time.time())
+        lines = [
+            f"- {f.name}：{f.title}（标签：{'、'.join(f.tags) or '无'}；{f.creator} 拍摄/制作，{f.license}）"
+            for f in found
+        ]
+        return "找到并存好了这些图（你看不到图本身，只能按标题和标签挑）：\n" + "\n".join(lines)
+
+    @filter.llm_tool(name="qq_set_avatar")
+    async def qq_set_avatar(self, event: AstrMessageEvent, image: str):
+        """换自己的 QQ 头像。想换就可以自己决定换，但一周最多一次。没有合适的图时，可以先用 qq_find_images 上网找。
+
+        Args:
+            image(string): 图片文件名，只能用 qq_list_images 或 qq_find_images 列出的
         """
         return await self._do(event, lambda q: q.set_avatar(image))
 

@@ -109,6 +109,10 @@
       "title": "Scanning and surfacing",
       "help": "The scanner polls one month-partition per minute. Each segment is Bernoulli-sampled: P = 1 − e^(−p·Δt), p = rate cap · σ((S + priming − threshold) / T). Hits enter the surfacing buffer."
     },
+    "budget": {
+      "title": "Context budget",
+      "help": "In the running phase the memory handed to the thinking model has three parts, each with a cap; their sum is the total budget for memory."
+    },
     "fresh": {
       "title": "Fresh memory",
       "help": "In the running phase no chat history is attached: what was just said stays present as almost-undecayed memory (D30, D31)."
@@ -319,6 +323,18 @@
         "Off"
       ]
     },
+    "budget.resident": {
+      "label": "Resident budget",
+      "help": "Most tokens the resident block (profile + always-remembered threads) may use. When over, the profile is kept first, then exempt threads."
+    },
+    "budget.surfaced": {
+      "label": "Surfacing budget",
+      "help": "Most tokens the surfacing area may use."
+    },
+    "budget.fresh": {
+      "label": "Fresh-memory budget",
+      "help": "Most tokens the just-said messages may use. When over, the oldest give way first (they are still consolidated into memory)."
+    },
     "fresh.floor": {
       "label": "Presence floor",
       "help": "Messages with strength at or above this stay present without sampling."
@@ -471,6 +487,14 @@
       "label": "Memory excerpt length",
       "help": "How much of a file's beginning is recorded in memory."
     },
+    "action.find_times": {
+      "label": "Find images: times",
+      "help": "Maximum image searches within the window."
+    },
+    "action.find_days": {
+      "label": "Find images: window",
+      "help": "Length of the rate window for image searches."
+    },
     "action.avatar_times": {
       "label": "Change avatar: times",
       "help": "Maximum avatar changes within the window."
@@ -562,6 +586,10 @@
     "web_search": {
       "label": "Web search",
       "help": "Use AstrBot's built-in web search (D36); source and key are configured in AstrBot."
+    },
+    "qq_find_images": {
+      "label": "Find images autonomously",
+      "help": "Let {name} search the web for images (Openverse, Creative Commons) and save them to images/ in the data folder, for avatars and post pictures."
     },
     "qq_set_avatar": {
       "label": "Change avatar autonomously",
