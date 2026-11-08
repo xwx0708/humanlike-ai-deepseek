@@ -30,7 +30,8 @@
   #notice.show { display: block; margin-top: 14px; }
   #notice code { font-size: 12.5px; }
   .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; padding: 0 28px; max-width: 1180px; flex: 1; min-height: 0; }
-  main { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 18px 4px 80px 0; }  /* 只上下滚；内容不许横向溢出 */
+  main { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 18px 4px 80px 0; scrollbar-width: none; }  /* 只上下滚；内容不许横向溢出；不显示滚动条（用户定） */
+  main::-webkit-scrollbar { display: none; }
   section, .with-preview > div, .row, .ctl { min-width: 0; }
   nav { display: flex; flex-direction: column; overflow-y: auto; min-height: 0; padding: 18px 4px 40px 0; scrollbar-width: none; }  /* 左右两块各自滚：鼠标在哪块就滚哪块；左栏不显示滚动条 */
   nav::-webkit-scrollbar { display: none; }
@@ -51,7 +52,7 @@
   nav .group:first-child { margin-top: 0; }
   .group-title { margin: 26px 0 10px; font-size: 13px; color: var(--muted); letter-spacing: .06em; }
   .group-title:first-child { margin-top: 0; }
-  .persona textarea { width: 100%; min-height: 220px; resize: vertical; font: inherit; font-size: 13.5px; line-height: 1.6;
+  .persona textarea { width: 100%; min-height: 220px; resize: none; overflow: hidden; font: inherit;  /* 高度随内容自动长，不出内部滚动条（用户定） */ font-size: 13.5px; line-height: 1.6;
                       background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
   .persona .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
   .persona .bar .unit { margin-left: auto; }
@@ -575,7 +576,10 @@ function personaSection() {
   const ta = h('textarea', { 'aria-label': t('persona') });  // 不放默认文字，保持空白（用户定）
   const count = h('span', { class: 'unit' });
   const file = h('input', { type: 'file', accept: '.md,.txt,text/plain,text/markdown', style: 'display:none' });
-  const upd = () => { count.textContent = `${tt('persona_chars', { n: ta.value.length })}${PERSONA.path ? ' · ' + PERSONA.path : ''}`; };
+  const fit = () => { if (!ta.clientWidth) return; ta.style.height = 'auto'; ta.style.height = (ta.scrollHeight + 2) + 'px'; };
+  let lastW = 0;  // 刚建好时可能还没排版（宽度不对），宽度一变就重算高度
+  new ResizeObserver(() => { if (ta.clientWidth !== lastW) { lastW = ta.clientWidth; fit(); } }).observe(ta);
+  const upd = () => { fit(); count.textContent = `${tt('persona_chars', { n: ta.value.length })}${PERSONA.path ? ' · ' + PERSONA.path : ''}`; };
   ta.addEventListener('input', () => { PERSONA.draft = ta.value; upd(); });
   file.addEventListener('change', async () => { const f = file.files[0]; if (!f) return; ta.value = await f.text(); PERSONA.draft = ta.value; upd(); notice(tt('persona_loaded', { f: f.name })); });
   const save = h('button', { class: 'primary', type: 'button', onclick: async () => {
