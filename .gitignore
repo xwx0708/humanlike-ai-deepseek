@@ -15,3 +15,10 @@ data/
 
 # 设置页写的用户设置（D40）
 settings.json
+
+# 评估：每次运行的数据库和临时文件不进版本库；报告和问答（report.md、answers.json）可以提交
+eval/results/*/memory.db
+eval/results/*/lifecycle.json
+eval/results/*/settings.json
+eval/results/*/data/
+!eval/data/
