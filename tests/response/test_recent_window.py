@@ -26,3 +26,14 @@ def test_recent_window_has_no_memory_requests():
     assert "没找到" in r.on_user_message("翻翻档案，昨天说了什么", 1).notes[0]
     r.on_action("发了一条说说", 2)
     assert r.on_user_message("在吗", 3).contexts[-1]["content"] == "（发了一条说说）"
+
+
+def test_recent_window_can_be_cut_by_tokens():
+    """评估时和记忆系统的上下文预算对齐（项目总评第三步）：按 token 从最近的往前放。"""
+    r = Responder(RecentWindowMemory(window=100, token_budget=30), lambda: "")
+    for i in range(10):
+        r.on_user_message(f"第{i}句" + "话" * 8, i)
+        r.on_reply("嗯", i + 0.5)
+    p = r.on_user_message("现在", 20)
+    kept = [c["content"] for c in p.contexts]
+    assert kept[-1] == "嗯" and len(kept) < 20 and "第0句话话话话话话话话" not in kept

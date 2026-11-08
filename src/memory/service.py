@@ -160,10 +160,13 @@ def background_job(
 
 
 class RecentWindowMemory:
-    """对照组：没有记忆系统，只把最近 N 条聊天记录当上下文。什么都不忘、什么都不想起。"""
+    """对照组：没有记忆系统，只把最近 N 条聊天记录当上下文。什么都不忘、什么都不想起。
 
-    def __init__(self, window: int = 50):
+    token_budget：另按 token 截（评估时和记忆系统的上下文预算对齐，项目总评第三步）；两个上限都给时取更严的。"""
+
+    def __init__(self, window: int = 50, token_budget: int | None = None):
         self.window = window
+        self.token_budget = token_budget
         self.turns: deque[ChatTurn] = deque(maxlen=window + 1)  # 窗口 + 这一条本身，更早的直接丢
         self.count = 0
         self.meta: dict[str, str] = {}
@@ -176,11 +179,17 @@ class RecentWindowMemory:
         return turn
 
     def context_for_turn(self, turn: ChatTurn, ts: float) -> MemoryContext:
-        history = [t for t in self.turns if t.id != turn.id]
+        history = [t for t in self.turns if t.id != turn.id][-self.window :]
         previous = history[-1].ts if history else None
-        return MemoryContext(
-            FAMILIAR, history=history[-self.window :], previous_ts=previous
-        )  # 永远是"上下文就是上下文"
+        if self.token_budget is not None:  # 从最近的往前放，放不下的丢掉
+            kept, used = [], 0
+            for t in reversed(history):
+                used += estimate_tokens(t.content) + 4
+                if used > self.token_budget:
+                    break
+                kept.append(t)
+            history = kept[::-1]
+        return MemoryContext(FAMILIAR, history=history, previous_ts=previous)  # 永远是"上下文就是上下文"
 
     def scan(self, ts: float) -> None:
         pass
