@@ -37,6 +37,8 @@
   nav::-webkit-scrollbar { display: none; }
   nav a { color: var(--ink-2); text-decoration: none; padding: 4px 10px; border-left: 2px solid transparent; font-size: 13.5px; }
   nav a:hover { color: var(--ink); border-left-color: var(--line); }
+  nav a.on { color: var(--ink); font-weight: 600; border-left: 3px solid var(--accent); padding-left: 9px; background: var(--accent-soft); border-radius: 0 4px 4px 0; }  /* 当前滚到的栏位 */
+  nav .group.on { color: var(--accent); }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px 22px 8px; margin-bottom: 18px; scroll-margin-top: 12px; }
   .preview { margin: 4px 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
   .with-preview { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 20px; align-items: start; }
@@ -529,10 +531,28 @@ function render() {
   for (const g of groups) {
     const ids = g.ids.filter(id => build[id]);
     if (!ids.length) continue;
-    main.append(h('h2', { class: 'group-title' }, tgroup(g.title))); nav.append(h('div', { class: 'group' }, tgroup(g.title)));
-    for (const id of ids) { const [el, title] = build[id](); main.append(el); nav.append(h('a', { href: '#' + id }, title)); }
+    const label = h('div', { class: 'group' }, tgroup(g.title));
+    main.append(h('h2', { class: 'group-title' }, tgroup(g.title))); nav.append(label);
+    for (const id of ids) { const [el, title] = build[id](); main.append(el); const a = h('a', { href: '#' + id }, title); a._group = label; nav.append(a); }
   }
+  spy();
 }
+
+// 右边滚到哪，左栏就标出哪一栏（连同它所在的分组），并让左栏跟着滚到能看见它（用户定）
+function spy() {
+  const main = $('#main'), links = [...document.querySelectorAll('#nav a')];
+  if (!links.length) return;
+  const top = main.getBoundingClientRect().top + 40;
+  let cur = links[0];
+  if (main.scrollTop + main.clientHeight >= main.scrollHeight - 2) cur = links[links.length - 1];  // 滚到底：最后一栏
+  else for (const a of links) { const s = document.getElementById(a.hash.slice(1)); if (s && s.getBoundingClientRect().top <= top) cur = a; }
+  if (cur.classList.contains('on')) return;
+  for (const a of links) { a.classList.remove('on'); a._group?.classList.remove('on'); }
+  cur.classList.add('on'); cur._group?.classList.add('on');
+  const nav = $('#nav'), nr = nav.getBoundingClientRect(), cr = cur.getBoundingClientRect();
+  if (cr.top < nr.top + 30 || cr.bottom > nr.bottom - 30) nav.scrollTop += cr.top - nr.top - nav.clientHeight / 2;
+}
+$('#main').addEventListener('scroll', spy, { passive: true });
 
 // 人设 / 角色卡的来源（2026-11-02 核对过：都是给 AI 聊天扮演用的，不是 agent 工作流；star 数为当时）
 const PERSONA_LIBS = [
